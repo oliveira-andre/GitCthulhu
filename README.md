@@ -11,42 +11,6 @@ GitKraken served only as a feature reference (see
 [docs/gitkraken-reference.md](docs/gitkraken-reference.md)), and none of its
 code or assets are used.
 
-## What it does
-
-- **Commit graph** of every branch, tag and remote. Lanes are drawn on a canvas,
-  with colored branch and tag labels, author initials in the dots, and a work-in-progress
-  row and stashes drawn into the graph. It's virtualized, so 2,000+ commits scroll smoothly.
-  Find commits by message, author or SHA (⌘F).
-- **Left panel**: local branches (in folders by `/`, with ahead/behind counts),
-  remotes, tags and stashes, with a filter (⌥⌘F). Double-click to check out;
-  right-click for everything else.
-- **Staging**: unstaged, staged and conflicted files; stage or unstage whole
-  files, hunks or single lines; discard the same way.
-- **Commit composer** with a summary counter, description, amend, ⌘↩ to commit
-  and ⇧⌘↩ to stage everything and commit.
-- **Diffs** for working-tree changes and for any commit (against its first
-  parent).
-- **Branches and history**: create, rename, delete (with a force option when
-  unmerged), check out (remote branches get a tracking branch; auto-stash when
-  local changes are in the way), fast-forward, merge, rebase, cherry-pick,
-  revert, reset (soft, mixed or hard), tags (lightweight and annotated, pushed or
-  deleted on remotes).
-- **Conflicts**: a banner with Continue, Skip or Abort for merges, rebases,
-  cherry-picks and reverts. Take ours or theirs, or mark resolved; conflicted
-  files show their markers.
-- **Remotes**: fetch, pull (fast-forward if possible, fast-forward only, or
-  rebase), push (asks for a remote the first time; offers pull or force push
-  with lease when rejected), add and remove remotes, optional auto-fetch.
-- **Credentials**: git and ssh prompts (HTTPS username and password, key
-  passphrases, unknown host keys) appear as dialogs. GitCthulhu's own executable
-  is the askpass helper. Your credential helpers and ssh-agent keep working.
-- **Tabs** with restore on launch, recent and favorite repositories, clone and
-  init, and a command palette (⌘P) for commands, branch checkout and recent repos.
-- **A File menu** on macOS: New Tab (⌘T), Open Repository… (⌘O), Clone
-  Repository…, New Repository…, Reopen Closed Tab (⇧⌘T), Close Tab (⌘W).
-  Opening from any tab puts the repository in a tab of its own.
-- Live refresh when files or refs change outside the app.
-
 ## How to run (developers)
 
 ### 1. Install the prerequisites (once)
@@ -132,6 +96,48 @@ rm -rf src-tauri/icons/android src-tauri/icons/ios   # desktop only
 - **A push or pull asks for nothing and fails:** GitCthulhu shows git's and
   ssh's prompts as dialogs. If none appeared, check that a credential helper or
   ssh-agent is set up, because those are used first.
+
+## Deploy to production
+
+Not written yet. It comes next session, following Hostly's: a signed release
+installed to `/Applications`, CI on macOS, Windows and Linux, and the Linux
+Docker check. See [Next session: deploy](#next-session-deploy-like-hostly).
+
+## What it does
+
+- **Commit graph** of every branch, tag and remote. Lanes are drawn on a canvas,
+  with colored branch and tag labels, author initials in the dots, and a work-in-progress
+  row and stashes drawn into the graph. It's virtualized, so 2,000+ commits scroll smoothly.
+  Find commits by message, author or SHA (⌘F).
+- **Left panel**: local branches (in folders by `/`, with ahead/behind counts),
+  remotes, tags and stashes, with a filter (⌥⌘F). Double-click to check out;
+  right-click for everything else.
+- **Staging**: unstaged, staged and conflicted files; stage or unstage whole
+  files, hunks or single lines; discard the same way.
+- **Commit composer** with a summary counter, description, amend, ⌘↩ to commit
+  and ⇧⌘↩ to stage everything and commit.
+- **Diffs** for working-tree changes and for any commit (against its first
+  parent).
+- **Branches and history**: create, rename, delete (with a force option when
+  unmerged), check out (remote branches get a tracking branch; auto-stash when
+  local changes are in the way), fast-forward, merge, rebase, cherry-pick,
+  revert, reset (soft, mixed or hard), tags (lightweight and annotated, pushed or
+  deleted on remotes).
+- **Conflicts**: a banner with Continue, Skip or Abort for merges, rebases,
+  cherry-picks and reverts. Take ours or theirs, or mark resolved; conflicted
+  files show their markers.
+- **Remotes**: fetch, pull (fast-forward if possible, fast-forward only, or
+  rebase), push (asks for a remote the first time; offers pull or force push
+  with lease when rejected), add and remove remotes, optional auto-fetch.
+- **Credentials**: git and ssh prompts (HTTPS username and password, key
+  passphrases, unknown host keys) appear as dialogs. GitCthulhu's own executable
+  is the askpass helper. Your credential helpers and ssh-agent keep working.
+- **Tabs** with restore on launch, recent and favorite repositories, clone and
+  init, and a command palette (⌘P) for commands, branch checkout and recent repos.
+- **A File menu** on macOS: New Tab (⌘T), Open Repository… (⌘O), Clone
+  Repository…, New Repository…, Reopen Closed Tab (⇧⌘T), Close Tab (⌘W).
+  Opening from any tab puts the repository in a tab of its own.
+- Live refresh when files or refs change outside the app.
 
 ## Follow-ups
 
