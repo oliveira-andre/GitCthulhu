@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitCthulhu</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+
+  <body>
+    <div class="app">
+      <header class="titlebar" data-tauri-drag-region>
+        <div id="tabs" class="tabs" role="tablist" data-tauri-drag-region></div>
+        <button id="new-tab" class="icon-button new-tab" type="button" title="New tab" aria-label="New tab">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        </button>
+        <div class="titlebar-fill" data-tauri-drag-region></div>
+      </header>
+      <div id="tab-bodies" class="tab-bodies"></div>
+    </div>
+    <div id="toasts" class="toasts" aria-live="polite"></div>
+  </body>
+</html>

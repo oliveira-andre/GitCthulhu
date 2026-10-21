@@ -1,0 +1,27 @@
+[package]
+name = "gitcthulhu"
+version = "0.1.0"
+description = "A graphical Git client"
+authors = []
+edition = "2024"
+
+[lib]
+# The `_lib` suffix keeps the lib name distinct from the bin name, which
+# matters on Windows: https://github.com/rust-lang/cargo/issues/8519
+name = "gitcthulhu_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+gitcthulhu-core = { version = "0.1.0", path = "../crates/gitcthulhu-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+
+[dev-dependencies]
+tauri = { version = "2", features = ["test"] }
+tempfile = "3.27.0"
