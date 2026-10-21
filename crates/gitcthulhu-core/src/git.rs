@@ -3,7 +3,7 @@
 //! config all behave exactly as they do in a terminal.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -187,6 +187,66 @@ impl Git {
 }
 
 impl Git {
+    /// Runs git and hands each NUL-terminated record of its stdout to
+    /// `record` as it arrives. Returning `false` stops git there, so a walk
+    /// over a long history ends as soon as it has found enough.
+    pub fn stream<S: AsRef<OsStr>>(
+        &self,
+        dir: &Path,
+        args: &[S],
+        record: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<()> {
+        let mut cmd = self.command(dir);
+        cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => Error::GitNotFound,
+            _ => Error::Io(e),
+        })?;
+        let mut stderr_pipe = child.stderr.take().expect("piped stderr");
+        let stderr_reader = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = stderr_pipe.read_to_end(&mut buf);
+            buf
+        });
+        let mut reader = BufReader::new(child.stdout.take().expect("piped stdout"));
+        let mut buf = Vec::new();
+        let mut stopped = false;
+        let read = loop {
+            buf.clear();
+            match reader.read_until(0, &mut buf) {
+                Ok(0) => break Ok(()),
+                Ok(_) => {}
+                Err(e) => break Err(e),
+            }
+            if buf.last() == Some(&0) {
+                buf.pop();
+            }
+            if !buf.is_empty() && !record(&buf) {
+                stopped = true;
+                break Ok(());
+            }
+        };
+        if stopped || read.is_err() {
+            let _ = child.kill();
+        }
+        drop(reader);
+        let status = child.wait()?;
+        let stderr = stderr_reader.join().unwrap_or_default();
+        read?;
+        if stopped {
+            return Ok(());
+        }
+        checked(
+            args,
+            Output {
+                code: status.code(),
+                stdout: Vec::new(),
+                stderr: lossy(&stderr),
+            },
+        )
+        .map(drop)
+    }
+
     /// Runs a long command (clone, fetch, pull, push) with `--progress`,
     /// passing each progress line to `progress` as git prints it. git ends
     /// progress updates with `\r`, so both `\r` and `\n` end a line.

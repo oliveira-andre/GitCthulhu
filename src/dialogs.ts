@@ -2,7 +2,17 @@
 import { el } from "./dom";
 
 export type Field =
-  | { name: string; label: string; type: "text" | "password"; value?: string; placeholder?: string; hint?: string; mono?: boolean }
+  | {
+      name: string;
+      label: string;
+      type: "text" | "password";
+      value?: string;
+      placeholder?: string;
+      hint?: string;
+      mono?: boolean;
+      /** Adds a "Browse…" button; resolves to the new value, or null to keep the old one. */
+      browse?: () => Promise<string | null>;
+    }
   | { name: string; label: string; type: "textarea"; value?: string; placeholder?: string; hint?: string; rows?: number }
   | { name: string; label: string; type: "checkbox"; value?: boolean; hint?: string }
   | { name: string; label: string; type: "select"; value?: string; options: { value: string; label: string }[]; hint?: string };
@@ -71,8 +81,22 @@ export function form(options: FormOptions): Promise<(FormValues & { button?: str
     }
     input.name = field.name;
     first ??= input;
+    let control: HTMLElement = input;
+    if ((field.type === "text" || field.type === "password") && field.browse) {
+      const browse = field.browse;
+      const b = el("button", "button-secondary small", "Browse…");
+      b.type = "button";
+      b.addEventListener("click", async () => {
+        const picked = await browse();
+        if (picked !== null) {
+          input.value = picked;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        }
+      });
+      control = el("span", "input-with-button", input, b);
+    }
     const label =
-      field.type === "checkbox" ? el("label", "checkbox", input, field.label) : el("label", "", field.label, input);
+      field.type === "checkbox" ? el("label", "checkbox", input, field.label) : el("label", "", field.label, control);
     formNode.append(label);
     if (field.hint) formNode.append(el("p", "hint", field.hint));
   }
@@ -168,4 +192,22 @@ export function refNameProblem(name: string): string | null {
     return "That name isn't allowed by Git.";
   if (n.includes("..") || n.includes("//") || n.includes("@{") || n === "@") return "That name isn't allowed by Git.";
   return null;
+}
+
+/** A read-only dialog showing `body`, with one button to close it. */
+export function infoDialog(title: string, body: HTMLElement): Promise<void> {
+  const dialog = el("dialog", "dialog wide");
+  const close = el("button", "button-primary", "Done");
+  close.type = "button";
+  dialog.append(el("form", "", el("h2", "", title), body, el("menu", "", close)));
+  document.body.append(dialog);
+  return new Promise((resolve) => {
+    close.addEventListener("click", () => dialog.close());
+    dialog.addEventListener("close", () => {
+      dialog.remove();
+      resolve();
+    });
+    dialog.showModal();
+    close.focus();
+  });
 }

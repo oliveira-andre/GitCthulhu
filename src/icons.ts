@@ -13,6 +13,8 @@ import {
   Cloud,
   Copy,
   Ellipsis,
+  Eye,
+  EyeOff,
   File,
   FileMinus,
   FilePen,
@@ -43,8 +45,10 @@ import {
   Star,
   Tag,
   Trash2,
+  Redo2,
   Undo2,
   X,
+  Zap,
   createElement,
 } from "lucide";
 
@@ -62,6 +66,8 @@ const icons = {
   cloud: Cloud,
   copy: Copy,
   more: Ellipsis,
+  eye: Eye,
+  eyeOff: EyeOff,
   file: File,
   fileRemoved: FileMinus,
   fileModified: FilePen,
@@ -93,7 +99,9 @@ const icons = {
   tag: Tag,
   trash: Trash2,
   undo: Undo2,
+  redo: Redo2,
   close: X,
+  speed: Zap,
 };
 
 export type IconName = keyof typeof icons;

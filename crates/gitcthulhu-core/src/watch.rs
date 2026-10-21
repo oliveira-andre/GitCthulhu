@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
@@ -26,6 +26,10 @@ pub struct RepoWatcher {
 }
 
 const QUIET: Duration = Duration::from_millis(300);
+/// While files keep changing (a build, a checkout), report at least this often.
+const MAX_WAIT: Duration = Duration::from_secs(2);
+/// ...but no more often than this.
+const MIN_GAP: Duration = Duration::from_secs(1);
 
 pub fn watch(repo: &Repo, on_change: impl Fn(Change) + Send + 'static) -> Result<RepoWatcher> {
     let (tx, rx) = mpsc::channel::<Event>();
@@ -48,10 +52,21 @@ pub fn watch(repo: &Repo, on_change: impl Fn(Change) + Send + 'static) -> Result
     let repo = repo.clone();
     std::thread::spawn(move || {
         // Ends when the watcher (and with it the sender) is dropped.
+        let mut last_report: Option<Instant> = None;
         while let Ok(first) = rx.recv() {
+            let started = Instant::now();
             let mut events = vec![first];
+            // Wait for a quiet moment, but not forever, and never report
+            // more than once per MIN_GAP.
             loop {
-                match rx.recv_timeout(QUIET) {
+                let since_report = last_report.map_or(MIN_GAP, |t| t.elapsed());
+                let wait = QUIET
+                    .max(MIN_GAP.saturating_sub(since_report))
+                    .min(MAX_WAIT.saturating_sub(started.elapsed()));
+                if wait.is_zero() {
+                    break;
+                }
+                match rx.recv_timeout(wait) {
                     Ok(event) => events.push(event),
                     Err(RecvTimeoutError::Timeout) => break,
                     Err(RecvTimeoutError::Disconnected) => return,
@@ -60,6 +75,7 @@ pub fn watch(repo: &Repo, on_change: impl Fn(Change) + Send + 'static) -> Result
             let change = classify(&repo, &git_dirs, &events);
             if change != Change::default() {
                 on_change(change);
+                last_report = Some(Instant::now());
             }
         }
     });

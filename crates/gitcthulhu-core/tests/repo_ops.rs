@@ -18,6 +18,7 @@ fn graph(f: &Fixture, wip: bool) -> log::Graph {
         &GraphOptions {
             limit: 100,
             work_in_progress: wip,
+            filter: Default::default(),
         },
     )
     .unwrap()
@@ -107,6 +108,7 @@ fn graph_limit_truncates() {
         &GraphOptions {
             limit: 3,
             work_in_progress: false,
+            filter: Default::default(),
         },
     )
     .unwrap();
@@ -194,6 +196,7 @@ fn stages_a_single_hunk_and_single_lines() {
         1,
         &diff.hunks[1].header,
         None,
+        3,
     )
     .unwrap();
     assert_eq!(
@@ -212,6 +215,7 @@ fn stages_a_single_hunk_and_single_lines() {
         0,
         &hunk.header,
         Some(&[eleven]),
+        3,
     )
     .unwrap();
     assert_eq!(
@@ -230,6 +234,7 @@ fn stages_a_single_hunk_and_single_lines() {
         0,
         &hunk.header,
         Some(&[removal]),
+        3,
     )
     .unwrap();
     assert!(f.staged("f.txt").starts_with("two\n"));
@@ -253,6 +258,7 @@ fn discards_chosen_lines_from_the_working_tree() {
         1,
         &hunk.header,
         Some(&[eleven]),
+        3,
     )
     .unwrap();
     assert_eq!(
@@ -276,6 +282,7 @@ fn stages_part_of_an_untracked_file() {
         0,
         &hunk.header,
         Some(&[0]),
+        3,
     )
     .unwrap();
     assert_eq!(f.staged("new.txt"), "keep\n");
@@ -293,6 +300,7 @@ fn a_stale_hunk_is_refused() {
         0,
         "@@ -1,2 +1,2 @@",
         None,
+        3,
     );
     assert!(matches!(result, Err(Error::Invalid(_))));
 }
@@ -308,6 +316,8 @@ fn commits_and_amends() {
             message: "Summary\n\nBody text",
             amend: false,
             allow_empty: false,
+            sign_off: false,
+            no_verify: false,
         },
     )
     .unwrap();
@@ -323,6 +333,8 @@ fn commits_and_amends() {
             message: "Reworded",
             amend: true,
             allow_empty: false,
+            sign_off: false,
+            no_verify: false,
         },
     )
     .unwrap();
@@ -336,6 +348,8 @@ fn commits_and_amends() {
             message: "  ",
             amend: false,
             allow_empty: false,
+            sign_off: false,
+            no_verify: false,
         },
     );
     assert!(matches!(empty, Err(Error::Invalid(_))));
@@ -558,6 +572,7 @@ fn fetch_pull_and_push_with_a_remote() {
         &PushOptions {
             remote: "origin",
             branch: "main",
+            remote_branch: None,
             set_upstream: true,
             force: false,
         },
@@ -643,4 +658,610 @@ fn failed_network_commands_never_wait_for_a_terminal() {
         &mut |_| {},
     );
     assert!(matches!(result, Err(Error::Git { .. })), "{result:?}");
+}
+
+#[test]
+fn picks_and_reverts_several_commits() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    f.git(&["switch", "-q", "-c", "other"]);
+    let one = f.commit("one", &[("one.txt", "1\n")]);
+    let two = f.commit("two", &[("two.txt", "2\n")]);
+    f.git(&["switch", "-q", "main"]);
+
+    ops::cherry_pick(&f.repo, &[one, two]).unwrap();
+    assert!(f.path("one.txt").exists() && f.path("two.txt").exists());
+    let picked: Vec<String> = f
+        .git(&["log", "-2", "--format=%H"])
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    ops::revert_many(&f.repo, &picked).unwrap();
+    assert!(!f.path("one.txt").exists() && !f.path("two.txt").exists());
+    assert_eq!(
+        f.git(&["log", "-1", "--format=%s"]).trim(),
+        "Revert \"one\""
+    );
+
+    // A merge mixed with ordinary commits is refused up front.
+    f.git(&["switch", "-q", "other"]);
+    f.git(&["merge", "-q", "--no-ff", "--no-edit", "main"]);
+    let merge = f.git(&["rev-parse", "HEAD"]).trim().to_owned();
+    let plain = f.git(&["rev-parse", "HEAD^2"]).trim().to_owned();
+    f.git(&["switch", "-q", "main"]);
+    assert!(matches!(
+        ops::cherry_pick(&f.repo, &[plain, merge]),
+        Err(Error::Invalid(_))
+    ));
+}
+
+#[test]
+fn stages_lines_from_a_full_file_diff() {
+    let f = Fixture::new();
+    f.commit("first", &[("f.txt", BEFORE)]);
+    f.write("f.txt", AFTER);
+    // Shown with all the context there is, the file is one hunk.
+    let diff = inspect::file_diff(&f.repo, &DiffTarget::Unstaged, "f.txt", None, 100_000).unwrap();
+    assert_eq!(diff.hunks.len(), 1);
+    let hunk = &diff.hunks[0];
+    let eleven = hunk.lines.iter().position(|l| l.text == "eleven").unwrap();
+    ops::apply_lines(
+        &f.repo,
+        LineAction::Stage,
+        "f.txt",
+        0,
+        &hunk.header,
+        Some(&[eleven]),
+        100_000,
+    )
+    .unwrap();
+    assert_eq!(f.staged("f.txt"), format!("{BEFORE}eleven\n"));
+    // Showing it with three lines of context and applying with another is refused, not misapplied.
+    let three = inspect::file_diff(&f.repo, &DiffTarget::Unstaged, "f.txt", None, 3).unwrap();
+    assert!(
+        ops::apply_lines(
+            &f.repo,
+            LineAction::Stage,
+            "f.txt",
+            0,
+            &three.hunks[0].header,
+            None,
+            100_000
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn reads_file_versions_for_image_diffs() {
+    use gitcthulhu_core::inspect::{BlobSource, blob};
+    let f = Fixture::new();
+    let first = f.commit("first", &[("img.png", "v1")]);
+    f.write("img.png", "v2");
+    ops::stage_all(&f.repo).unwrap();
+    f.write("img.png", "v3");
+    let read = |source: BlobSource| blob(&f.repo, &source, "img.png", 1024).unwrap();
+    assert_eq!(
+        read(BlobSource::Revision { rev: first.clone() }).as_deref(),
+        Some(&b"v1"[..])
+    );
+    assert_eq!(read(BlobSource::Index).as_deref(), Some(&b"v2"[..]));
+    assert_eq!(read(BlobSource::Worktree).as_deref(), Some(&b"v3"[..]));
+    assert_eq!(
+        blob(
+            &f.repo,
+            &BlobSource::Revision { rev: first.clone() },
+            "missing.png",
+            1024
+        )
+        .unwrap(),
+        None
+    );
+    assert!(blob(&f.repo, &BlobSource::Worktree, "../escape.png", 1024).is_err());
+    assert!(
+        blob(&f.repo, &BlobSource::Worktree, "img.png", 1).is_err(),
+        "too large"
+    );
+}
+
+#[test]
+fn ignoring_whitespace_hides_whitespace_only_changes() {
+    let f = Fixture::new();
+    f.commit("first", &[("f.txt", "a\nb\n")]);
+    f.write("f.txt", "a  \n  b\nc\n");
+    let all =
+        inspect::file_diff_with(&f.repo, &DiffTarget::Unstaged, "f.txt", None, 3, false).unwrap();
+    let lean =
+        inspect::file_diff_with(&f.repo, &DiffTarget::Unstaged, "f.txt", None, 3, true).unwrap();
+    let changed = |d: &gitcthulhu_core::diff::FileDiff| {
+        d.hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .filter(|l| l.kind != gitcthulhu_core::diff::LineKind::Context)
+            .count()
+    };
+    assert_eq!(changed(&all), 5);
+    assert_eq!(changed(&lean), 1, "only the added line remains");
+}
+
+#[test]
+fn hidden_and_soloed_branches_change_what_the_graph_shows() {
+    use gitcthulhu_core::log::RefFilter;
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    f.git(&["switch", "-q", "-c", "side"]);
+    let side = f.commit("side work", &[("s.txt", "s\n")]);
+    f.git(&["switch", "-q", "main"]);
+    let main = f.commit("main work", &[("m.txt", "m\n")]);
+    f.git(&["tag", "old", &side]);
+    f.write("a.txt", "dirty\n");
+    ops::stash_push(&f.repo, None, false).unwrap();
+
+    let load = |filter: RefFilter| {
+        let options = GraphOptions {
+            limit: 100,
+            work_in_progress: false,
+            filter,
+        };
+        log::load(&f.repo, &options)
+            .unwrap()
+            .commits
+            .into_iter()
+            .map(|c| c.subject)
+            .collect::<Vec<_>>()
+    };
+    assert!(load(RefFilter::default()).contains(&"side work".to_owned()));
+
+    // Hiding the branch alone isn't enough while a tag still reaches the commit.
+    let hidden = load(RefFilter {
+        hidden: vec!["refs/heads/side".into()],
+        ..Default::default()
+    });
+    assert!(hidden.contains(&"side work".to_owned()));
+    let hidden = load(RefFilter {
+        hidden: vec!["refs/heads/side".into(), "refs/tags/*".into()],
+        hide_stashes: true,
+        ..Default::default()
+    });
+    assert!(!hidden.contains(&"side work".to_owned()), "{hidden:?}");
+    assert!(
+        !hidden.iter().any(|s| s.contains("WIP on")),
+        "stashes hidden"
+    );
+
+    let solo = load(RefFilter {
+        solo: vec!["refs/heads/side".into()],
+        ..Default::default()
+    });
+    assert_eq!(solo, ["side work", "base"]);
+    let _ = main;
+
+    let bad = GraphOptions {
+        limit: 10,
+        work_in_progress: false,
+        filter: RefFilter {
+            hidden: vec!["--output=x".into()],
+            ..Default::default()
+        },
+    };
+    assert!(log::load(&f.repo, &bad).is_err());
+}
+
+#[test]
+fn counts_changes_per_commit_and_searches_all_history() {
+    let f = Fixture::new();
+    let first = f.commit("Summon the old ones", &[("a.txt", "1\n2\n3\n")]);
+    let second = f.commit("Tidy", &[("a.txt", "1\nTWO\n3\n"), ("b.txt", "b\n")]);
+    f.git(&["switch", "-q", "-c", "other"]);
+    f.git(&["switch", "-q", "main"]);
+    f.git(&["merge", "-q", "--no-ff", "--no-edit", "other"]);
+    let stats = log::commit_stats(&f.repo, &[first.clone(), second.clone()]).unwrap();
+    assert_eq!(
+        (stats[0].files, stats[0].insertions, stats[0].deletions),
+        (1, 3, 0),
+        "the root commit counts too"
+    );
+    assert_eq!(
+        (stats[1].files, stats[1].insertions, stats[1].deletions),
+        (2, 2, 1)
+    );
+
+    let found = log::search(&f.repo, "summon", 50).unwrap();
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].oid, first);
+    let by_author = log::search(&f.repo, "test user", 50).unwrap();
+    assert!(by_author.len() >= 2);
+    let by_sha = log::search(&f.repo, &second[..8], 50).unwrap();
+    assert_eq!(by_sha[0].oid, second);
+    assert!(log::search(&f.repo, "  ", 50).unwrap().is_empty());
+}
+
+#[test]
+fn search_reads_whole_messages_and_stops_at_the_limit() {
+    let f = Fixture::new();
+    let tidy = f.commit("Tidy up\n\nAlso feeds the kraken.", &[("a.txt", "a\n")]);
+    for n in 0..5 {
+        f.commit(
+            &format!("Kraken feeding {n}"),
+            &[("a.txt", &format!("{n}\n"))],
+        );
+    }
+    let in_body = log::search(&f.repo, "the KRAKEN", 50).unwrap();
+    assert_eq!(in_body.len(), 1);
+    assert_eq!(in_body[0].oid, tidy);
+    assert_eq!(
+        in_body[0].subject, "Tidy up",
+        "the subject, not the whole message"
+    );
+
+    let few = log::search(&f.repo, "kraken", 3).unwrap();
+    assert_eq!(few.len(), 3);
+    assert!(few.windows(2).all(|w| w[0].commit_time >= w[1].commit_time));
+    assert_eq!(log::search(&f.repo, "kraken", 50).unwrap().len(), 6);
+}
+
+#[test]
+fn writes_a_commit_graph() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    assert!(!f.repo.has_commit_graph());
+    assert!(!graph(&f, false).indexed);
+    let mut progress = Vec::new();
+    ops::write_commit_graph(&f.repo, &mut |line| progress.push(line.to_owned())).unwrap();
+    assert!(f.repo.has_commit_graph());
+    assert!(graph(&f, false).indexed);
+}
+
+#[test]
+fn commit_options_identity_and_template() {
+    let f = Fixture::new();
+    f.write("a.txt", "a\n");
+    ops::stage_all(&f.repo).unwrap();
+    // A hook that would refuse every commit.
+    let hook = f.repo.git_dir().join("hooks/pre-commit");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let options = |no_verify| CommitOptions {
+        message: "signed",
+        amend: false,
+        allow_empty: false,
+        sign_off: true,
+        no_verify,
+    };
+    if cfg!(unix) {
+        assert!(
+            ops::commit(&f.repo, &options(false)).is_err(),
+            "the hook runs"
+        );
+    }
+    ops::commit(&f.repo, &options(true)).unwrap();
+    assert!(
+        ops::head_message(&f.repo)
+            .unwrap()
+            .contains("Signed-off-by: Test User <test@example.com>")
+    );
+
+    let me = ops::identity(&f.repo).unwrap();
+    assert_eq!(me.name.as_deref(), Some("Test User"));
+    assert!(!me.local);
+    ops::set_identity(&f.repo, "Repo Person", "repo@example.com", false).unwrap();
+    let me = ops::identity(&f.repo).unwrap();
+    assert_eq!((me.name.as_deref(), me.local), (Some("Repo Person"), true));
+
+    assert_eq!(ops::commit_template(&f.repo).unwrap(), None);
+    f.write(".gitmessage", "# Explain why\nfeat: \n\nRefs: \n");
+    f.git(&["config", "commit.template", ".gitmessage"]);
+    assert_eq!(
+        ops::commit_template(&f.repo).unwrap().as_deref(),
+        Some("feat: \n\nRefs:")
+    );
+}
+
+#[test]
+fn a_missing_identity_is_reported_as_such() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("gitconfig");
+    std::fs::write(
+        &config,
+        "[user]\n\tuseConfigOnly = true\n[commit]\n\tgpgsign = false\n",
+    )
+    .unwrap();
+    let git = gitcthulhu_core::Git::find()
+        .unwrap()
+        .with_env("GIT_CONFIG_GLOBAL", &config)
+        .with_env("GIT_CONFIG_NOSYSTEM", "1");
+    let repo = Repo::init(&git, &dir.path().join("r"), Some("main")).unwrap();
+    std::fs::write(repo.root().join("a.txt"), "a").unwrap();
+    ops::stage_all(&repo).unwrap();
+    let error = ops::commit(
+        &repo,
+        &CommitOptions {
+            message: "x",
+            amend: false,
+            allow_empty: false,
+            sign_off: false,
+            no_verify: false,
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), "identityUnknown", "{error}");
+}
+
+#[test]
+fn remotes_can_be_edited_and_upstreams_set() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    let remote_dir = f.dir.path().join("remote.git");
+    f.git
+        .run(
+            f.dir.path(),
+            &["init", "-q", "--bare", remote_dir.to_str().unwrap()],
+        )
+        .unwrap();
+    ops::add_remote(&f.repo, "origin", "https://example.invalid/x.git").unwrap();
+    ops::set_remote_url(&f.repo, "origin", remote_dir.to_str().unwrap()).unwrap();
+    assert_eq!(
+        ops::remote_url(&f.repo, "origin").unwrap().as_deref(),
+        Some(remote_dir.to_str().unwrap())
+    );
+    ops::rename_remote(&f.repo, "origin", "upstream").unwrap();
+    assert_eq!(f.repo.remotes().unwrap(), ["upstream"]);
+
+    // Push main to a differently named branch, then track it.
+    let options = PushOptions {
+        remote: "upstream",
+        branch: "main",
+        remote_branch: Some("trunk"),
+        set_upstream: false,
+        force: false,
+    };
+    ops::push(&f.repo, &options, &mut |_| {}).unwrap();
+    ops::fetch(&f.repo, None, &mut |_| {}).unwrap();
+    ops::set_upstream(&f.repo, "main", Some("upstream/trunk")).unwrap();
+    let main = refs::list(&f.repo)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.short == "main")
+        .unwrap();
+    assert_eq!(main.upstream.as_deref(), Some("upstream/trunk"));
+    ops::set_upstream(&f.repo, "main", None).unwrap();
+    let main = refs::list(&f.repo)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.short == "main")
+        .unwrap();
+    assert_eq!(main.upstream, None);
+}
+
+#[test]
+fn clones_shallow_and_single_branch() {
+    let f = Fixture::new();
+    for i in 0..3 {
+        f.commit(&format!("c{i}"), &[("a.txt", &i.to_string())]);
+    }
+    f.git(&["branch", "other"]);
+    let url = format!("file://{}", f.repo.root().display());
+    let options = gitcthulhu_core::CloneOptions {
+        depth: Some(1),
+        branch: Some("other".into()),
+        single_branch: true,
+        recurse_submodules: false,
+    };
+    let clone = gitcthulhu_core::clone_with(
+        &f.git,
+        &url,
+        &f.dir.path().join("shallow"),
+        &options,
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(
+        clone
+            .run_text(&["rev-list", "--count", "HEAD"])
+            .unwrap()
+            .trim(),
+        "1"
+    );
+    assert_eq!(clone.head().unwrap().branch.as_deref(), Some("other"));
+    let remote_branches = clone.run_text(&["branch", "-r"]).unwrap();
+    assert!(
+        !remote_branches.contains("origin/main"),
+        "{remote_branches}"
+    );
+}
+
+#[test]
+fn stages_and_unstages_lines_across_several_hunks() {
+    use gitcthulhu_core::ops::LineSelection;
+    let f = Fixture::new();
+    f.commit("first", &[("f.txt", BEFORE)]);
+    // Three separate changes, far enough apart to be three hunks.
+    let lines: Vec<String> = (1..=30).map(|n| n.to_string()).collect();
+    f.commit("long", &[("f.txt", &format!("{}\n", lines.join("\n")))]);
+    let mut changed = lines.clone();
+    changed[1] = "TWO".into();
+    changed.insert(15, "inserted".into());
+    changed[28] = "TWENTY-EIGHT".into();
+    f.write("f.txt", &format!("{}\n", changed.join("\n")));
+
+    let diff = inspect::file_diff(&f.repo, &DiffTarget::Unstaged, "f.txt", None, 3).unwrap();
+    assert_eq!(diff.hunks.len(), 3);
+    let pick = |hunk: usize, text: &str| {
+        let h = &diff.hunks[hunk];
+        LineSelection {
+            hunk,
+            header: h.header.clone(),
+            lines: Some(vec![h.lines.iter().position(|l| l.text == text).unwrap()]),
+        }
+    };
+    // Stage only the additions of hunks 0 and 2 (their removals stay as context), and all of hunk 1.
+    let selections = vec![
+        pick(0, "TWO"),
+        LineSelection {
+            hunk: 1,
+            header: diff.hunks[1].header.clone(),
+            lines: None,
+        },
+        pick(2, "TWENTY-EIGHT"),
+    ];
+    ops::apply_selection(&f.repo, LineAction::Stage, "f.txt", &selections, 3).unwrap();
+    let staged = f.staged("f.txt");
+    let staged: Vec<&str> = staged.lines().collect();
+    assert_eq!(&staged[..4], ["1", "2", "TWO", "3"]);
+    assert!(
+        staged.contains(&"inserted") && staged.contains(&"TWENTY-EIGHT") && staged.contains(&"28")
+    );
+
+    // And back out, from the staged side, in one go.
+    let staged_diff = inspect::file_diff(&f.repo, &DiffTarget::Staged, "f.txt", None, 3).unwrap();
+    let all: Vec<LineSelection> = staged_diff
+        .hunks
+        .iter()
+        .enumerate()
+        .map(|(i, h)| LineSelection {
+            hunk: i,
+            header: h.header.clone(),
+            lines: None,
+        })
+        .collect();
+    ops::apply_selection(&f.repo, LineAction::Unstage, "f.txt", &all, 3).unwrap();
+    assert_eq!(f.staged("f.txt"), format!("{}\n", lines.join("\n")));
+}
+
+#[test]
+fn stashes_only_the_chosen_files() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n"), ("b.txt", "b\n")]);
+    f.write("a.txt", "A\n");
+    f.write("b.txt", "B\n");
+    ops::stash_paths(&f.repo, Some("just a"), false, &["a.txt".into()]).unwrap();
+    assert_eq!(f.read("a.txt"), "a\n");
+    assert_eq!(f.read("b.txt"), "B\n", "b's change stays");
+    ops::stash_apply(&f.repo, "stash@{0}", true).unwrap();
+    assert_eq!(f.read("a.txt"), "A\n");
+}
+
+#[test]
+fn stashes_can_be_renamed_and_show_their_untracked_files() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    f.write("a.txt", "A\n");
+    f.write("new.txt", "brand new\n");
+    ops::stash_push(&f.repo, Some("old name"), true).unwrap();
+    let oid = log::stash_list(&f.repo).unwrap()[0].oid.clone();
+    let (holder, files) = ops::stash_untracked(&f.repo, &oid).unwrap();
+    assert!(holder.is_some());
+    assert_eq!(
+        files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+        ["new.txt"]
+    );
+    let diff = inspect::file_diff(
+        &f.repo,
+        &DiffTarget::Commit {
+            oid: holder.unwrap(),
+        },
+        "new.txt",
+        None,
+        3,
+    )
+    .unwrap();
+    assert_eq!(diff.hunks[0].lines[0].text, "brand new");
+
+    ops::stash_rename(&f.repo, "stash@{0}", "new name").unwrap();
+    let stashes = log::stash_list(&f.repo).unwrap();
+    assert_eq!(stashes.len(), 1);
+    assert_eq!(stashes[0].oid, oid, "the same stash");
+    assert_eq!(stashes[0].message, "new name");
+
+    // A stash without untracked files has none to show.
+    f.write("a.txt", "again\n");
+    ops::stash_push(&f.repo, None, false).unwrap();
+    let plain = log::stash_list(&f.repo).unwrap()[0].oid.clone();
+    assert_eq!(ops::stash_untracked(&f.repo, &plain).unwrap().0, None);
+}
+
+#[test]
+fn patches_are_saved_and_applied_as_changes_or_commits() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    let one = f.commit("one", &[("one.txt", "1\n")]);
+    let two = f.commit("two", &[("two.txt", "2\n")]);
+    let series = f.dir.path().join("series.patch");
+    std::fs::write(
+        &series,
+        ops::format_patch(&f.repo, &[one.clone(), two.clone()]).unwrap(),
+    )
+    .unwrap();
+
+    // Back to before them, then replay as commits.
+    let base = f.git(&["rev-parse", "HEAD~2"]).trim().to_owned();
+    ops::reset(&f.repo, &base, ResetMode::Hard).unwrap();
+    ops::apply_patch(&f.repo, &series, true).unwrap();
+    assert_eq!(f.git(&["log", "--format=%s", "-2"]).trim(), "two\none");
+
+    // Uncommitted changes as a patch, applied to a clean tree as changes.
+    f.write("a.txt", "changed\n");
+    let changes = f.dir.path().join("changes.patch");
+    std::fs::write(&changes, ops::changes_patch(&f.repo).unwrap()).unwrap();
+    ops::discard_paths(&f.repo, &["a.txt".into()]).unwrap();
+    assert!(ops::changes_patch(&f.repo).is_err(), "nothing to save");
+    ops::apply_patch(&f.repo, &changes, false).unwrap();
+    assert_eq!(f.read("a.txt"), "changed\n");
+}
+
+#[test]
+fn a_conflicting_patch_series_stops_and_can_be_aborted() {
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "base\n")]);
+    let theirs = f.commit("theirs", &[("a.txt", "theirs\n")]);
+    let patch = f.dir.path().join("theirs.patch");
+    std::fs::write(&patch, ops::format_patch(&f.repo, &[theirs]).unwrap()).unwrap();
+    let base = f.git(&["rev-parse", "HEAD~1"]).trim().to_owned();
+    ops::reset(&f.repo, &base, ResetMode::Hard).unwrap();
+    f.commit("ours", &[("a.txt", "ours\n")]);
+
+    assert!(matches!(
+        ops::apply_patch(&f.repo, &patch, true),
+        Err(Error::Conflicts(_))
+    ));
+    assert!(
+        matches!(f.repo.state(), RepoState::ApplyingPatches { .. }),
+        "{:?}",
+        f.repo.state()
+    );
+    ops::sequence(&f.repo, Sequence::Abort).unwrap();
+    assert_eq!(f.repo.state(), RepoState::Clean);
+}
+
+#[test]
+fn the_watcher_reports_changes_even_while_files_keep_changing() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+    let f = Fixture::new();
+    f.commit("base", &[("a.txt", "a\n")]);
+    let (tx, rx) = mpsc::channel();
+    let _watcher = gitcthulhu_core::watch::watch(&f.repo, move |change| {
+        let _ = tx.send(change);
+    })
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    // Keep writing faster than the quiet period for longer than the max wait.
+    let start = Instant::now();
+    let mut reported = None;
+    while start.elapsed() < Duration::from_secs(5) {
+        f.write("a.txt", &format!("{:?}\n", start.elapsed()));
+        std::thread::sleep(Duration::from_millis(100));
+        if let Ok(change) = rx.try_recv() {
+            reported = Some((change, start.elapsed()));
+            break;
+        }
+    }
+    let (change, after) = reported.expect("a change was reported while writing");
+    assert!(change.files);
+    assert!(after < Duration::from_secs(4), "reported after {after:?}");
 }

@@ -1,16 +1,49 @@
 // The commit graph: a virtualized table of commits with the lanes drawn on
 // a canvas over the graph column. Only the rows in view exist in the DOM.
-import { type Graph, type GraphCommit, type Ref, WORK_IN_PROGRESS } from "../api";
+import { type CommitStat, type Graph, type GraphCommit, type Ref, WORK_IN_PROGRESS, api, errorMessage } from "../api";
 import { el } from "../dom";
-import { avatarColor, formatTime, initials, laneColor, plural, shortSha } from "../format";
-import { icon } from "../icons";
+import { avatarColor, formatTime, initials, laneColor, plural, relativeTime, shortSha } from "../format";
+import { icon, iconButton } from "../icons";
+import { type MenuItem, showMenu } from "../menu";
+import { isMac } from "../platform";
+import { startRefDrag } from "./ref-drag";
 import type { RepoView } from "./repo-view";
 
 export const ROW = 28;
 const LANE = 20;
 const PAD = 8;
 const OVERSCAN = 8;
-const REFS_WIDTH = 170;
+
+type ColumnId = "refs" | "graph" | "author" | "changes" | "date" | "sha";
+
+interface Columns {
+  widths: Record<ColumnId, number>;
+  hidden: ColumnId[];
+}
+
+/** The columns that can be hidden; the graph can only be resized. */
+const COLUMN_NAMES: Partial<Record<ColumnId, string>> = { refs: "Branch / Tag", author: "Author", changes: "Changes", date: "Date", sha: "SHA" };
+/** A graph width of 0 sizes it to its lanes (up to 320 px). */
+const DEFAULT_COLUMNS: Columns = { widths: { refs: 170, graph: 0, author: 140, changes: 110, date: 116, sha: 76 }, hidden: ["changes"] };
+const COLUMNS_KEY = "gitcthulhu.graphColumns";
+
+function loadColumns(): Columns {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLUMNS_KEY) ?? "null") as Partial<Columns> | null;
+    if (saved) return { widths: { ...DEFAULT_COLUMNS.widths, ...saved.widths }, hidden: (saved.hidden ?? DEFAULT_COLUMNS.hidden).filter((h) => h !== "graph") };
+  } catch {
+    // Use the defaults.
+  }
+  return structuredClone(DEFAULT_COLUMNS);
+}
+
+function saveColumns(columns: Columns): void {
+  try {
+    localStorage.setItem(COLUMNS_KEY, JSON.stringify(columns));
+  } catch {
+    // Not remembered this time.
+  }
+}
 
 /** Branches that share a name locally and on remotes become one label. */
 interface RefLabel {
@@ -30,7 +63,16 @@ export class GraphView {
   private readonly searchInput: HTMLInputElement;
   private readonly searchCount: HTMLElement;
   private readonly footer: HTMLElement;
-  private graph: Graph = { commits: [], rows: [], truncated: false };
+  private readonly filterBar: HTMLElement;
+  private readonly indexBar: HTMLElement;
+  private readonly header: HTMLElement;
+  private readonly results: HTMLElement;
+  private columns = loadColumns();
+  /** Changed-line counts, fetched for the rows in view while that column shows. */
+  private stats = new Map<string, CommitStat>();
+  private pendingStats = new Set<string>();
+  private statsTimer: number | undefined;
+  private graph: Graph = { commits: [], rows: [], truncated: false, indexed: true };
   private labels = new Map<string, RefLabel[]>();
   private headOid: string | null = null;
   private graphWidth = 56;
@@ -59,7 +101,13 @@ export class GraphView {
     closeSearch.type = "button";
     closeSearch.title = "Close (Esc)";
     closeSearch.addEventListener("click", () => this.closeSearch());
-    this.searchBar = el("div", "graph-search", icon("search", 14), this.searchInput, this.searchCount, prev, next, closeSearch);
+    const everywhere = el("button", "button-secondary small", "All history");
+    everywhere.type = "button";
+    everywhere.title = "Search every commit, not just the ones loaded";
+    everywhere.addEventListener("click", () => void this.searchEverywhere());
+    this.results = el("div", "search-results");
+    this.results.hidden = true;
+    this.searchBar = el("div", "graph-search", icon("search", 14), this.searchInput, this.searchCount, prev, next, everywhere, closeSearch, this.results);
     this.searchBar.hidden = true;
     this.searchInput.addEventListener("input", () => this.setSearch(this.searchInput.value));
     this.searchInput.addEventListener("keydown", (event) => {
@@ -73,23 +121,44 @@ export class GraphView {
       }
     });
 
-    const header = el(
+    const headerCell = (id: ColumnId | "graph" | "message", label: string) => {
+      const cell = el("div", `col col-${id}`, label);
+      if (id !== "message") {
+        const grip = el("span", "col-grip");
+        grip.addEventListener("pointerdown", (event) => this.resizeColumn(event, id, grip));
+        cell.append(grip);
+      }
+      return cell;
+    };
+    const columnsButton = iconButton("settings", "Columns", (event) => this.columnMenu({ x: event.clientX, y: event.clientY }), "icon-button small columns-button");
+    this.header = el(
       "div",
       "graph-header",
-      el("div", "col col-refs", "Branch / Tag"),
-      el("div", "col col-graph", "Graph"),
-      el("div", "col col-message", "Commit message"),
-      el("div", "col col-author", "Author"),
-      el("div", "col col-date", "Date"),
-      el("div", "col col-sha", "SHA"),
+      headerCell("refs", "Branch / Tag"),
+      headerCell("graph", "Graph"),
+      headerCell("message", "Commit message"),
+      headerCell("author", "Author"),
+      headerCell("changes", "Changes"),
+      headerCell("date", "Date"),
+      headerCell("sha", "SHA"),
+      columnsButton,
     );
+    this.header.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      this.columnMenu({ x: event.clientX, y: event.clientY });
+    });
+    this.filterBar = el("div", "graph-filter");
+    this.filterBar.hidden = true;
+    this.indexBar = el("div", "graph-index");
+    this.indexBar.hidden = true;
     this.canvas = el("canvas", "graph-canvas");
     this.spacer = el("div", "graph-spacer", this.canvas);
     this.scroll = el("div", "graph-scroll", this.spacer);
     this.scroll.tabIndex = 0;
     this.scroll.setAttribute("aria-label", "Commits");
     this.footer = el("div", "graph-footer");
-    this.root = el("div", "graph-view", this.searchBar, header, this.scroll, this.footer);
+    this.root = el("div", "graph-view", this.searchBar, this.indexBar, this.filterBar, this.header, this.scroll, this.footer);
+    this.applyColumns();
 
     this.scroll.addEventListener("scroll", () => this.schedule());
     new ResizeObserver(() => this.schedule()).observe(this.scroll);
@@ -99,29 +168,42 @@ export class GraphView {
   setData(graph: Graph, refs: Ref[], headOid: string | null): void {
     this.graph = graph;
     this.headOid = headOid;
-    this.labels = buildLabels(refs);
+    this.labels = buildLabels(refs.filter((r) => !this.view.isHidden(r.name)));
     let maxLane = 0;
     for (const row of graph.rows) {
       maxLane = Math.max(maxLane, row.lane);
       for (const e of row.edges) maxLane = Math.max(maxLane, e.from, e.to);
     }
-    this.graphWidth = Math.min(Math.max(PAD * 2 + (maxLane + 1) * LANE, 56), 320);
+    const lanes = Math.min(Math.max(PAD * 2 + (maxLane + 1) * LANE, 56), 320);
+    this.graphWidth = this.columns.widths.graph > 0 ? this.columns.widths.graph : lanes;
     this.root.style.setProperty("--graph-width", `${this.graphWidth}px`);
-    this.root.style.setProperty("--refs-width", `${REFS_WIDTH}px`);
     this.spacer.style.height = `${graph.commits.length * ROW}px`;
-    this.footer.textContent = graph.truncated
-      ? `Showing the latest ${plural(graph.commits.length, "commit")}. Raise the limit in Preferences to see more.`
-      : "";
+    this.footer.replaceChildren();
+    if (graph.truncated) {
+      const more = el("button", "button-secondary small", `Load ${this.view.settings().commitLimit.toLocaleString()} more`);
+      more.type = "button";
+      more.addEventListener("click", () => this.view.loadMore());
+      this.footer.append(`Showing the latest ${plural(graph.commits.length, "commit")}. `, more);
+    }
     this.footer.hidden = !graph.truncated;
+    this.renderFilterBar();
+    this.renderIndexBar();
     if (this.search) this.setSearch(this.search, false);
     this.invalidate();
   }
 
-  /** Redraws every row, for example after the selection moved. */
+  /**
+   * Redraws every row, for example after the selection moved. It happens
+   * at once: waiting for a frame would show an empty graph in between.
+   */
   invalidate(): void {
     for (const node of this.rendered.values()) node.remove();
     this.rendered.clear();
-    this.schedule();
+    if (this.frame) {
+      cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    }
+    this.draw();
   }
 
   focus(): void {
@@ -153,6 +235,7 @@ export class GraphView {
 
   private closeSearch(): void {
     this.searchBar.hidden = true;
+    this.results.hidden = true;
     this.searchInput.value = "";
     this.setSearch("");
     this.focus();
@@ -237,13 +320,225 @@ export class GraphView {
       }
     }
     this.drawLanes(first, last);
+    if (!this.columns.hidden.includes("changes")) this.requestStats(first, last);
+  }
+
+  private requestStats(first: number, last: number): void {
+    const wanted = this.graph.commits
+      .slice(first, last + 1)
+      .filter((c) => c.kind === "commit" && !this.stats.has(c.oid) && !this.pendingStats.has(c.oid))
+      .map((c) => c.oid);
+    if (!wanted.length) return;
+    for (const oid of wanted) this.pendingStats.add(oid);
+    window.clearTimeout(this.statsTimer);
+    this.statsTimer = window.setTimeout(() => {
+      const batch = [...this.pendingStats];
+      api.commitStats(this.view.id, batch).then(
+        (stats) => {
+          for (const stat of stats) this.stats.set(stat.oid, stat);
+          for (const oid of batch) this.pendingStats.delete(oid);
+          for (const row of this.rendered.values()) {
+            const cell = row.querySelector<HTMLElement>(".col-changes");
+            if (cell && row.dataset.oid) this.fillChanges(cell, row.dataset.oid);
+          }
+        },
+        () => {
+          for (const oid of batch) this.pendingStats.delete(oid);
+        },
+      );
+    }, 120);
+  }
+
+  /** `+12 −3` and a bar split by their share. */
+  private fillChanges(cell: HTMLElement, oid: string): void {
+    const stat = this.stats.get(oid);
+    if (!stat) return void cell.replaceChildren();
+    const total = stat.insertions + stat.deletions;
+    const bar = el("span", "change-bar");
+    if (total) {
+      const width = Math.min(48, 8 + Math.log2(total + 1) * 5);
+      bar.style.width = `${width}px`;
+      bar.style.setProperty("--added", `${(stat.insertions / total) * 100}%`);
+    }
+    cell.replaceChildren(el("span", "added", `+${stat.insertions}`), el("span", "removed", `−${stat.deletions}`), bar);
+    cell.title = `${plural(stat.files, "file")} changed, ${stat.insertions} added, ${stat.deletions} removed`;
+  }
+
+  private applyColumns(): void {
+    const { widths, hidden } = this.columns;
+    for (const id of Object.keys(widths) as ColumnId[]) {
+      if (id === "graph") continue;
+      this.root.style.setProperty(`--col-${id}`, `${widths[id]}px`);
+      this.root.classList.toggle(`hide-col-${id}`, hidden.includes(id));
+    }
+    this.root.style.setProperty("--refs-width", hidden.includes("refs") ? "0px" : `${widths.refs}px`);
+  }
+
+  private refsWidth(): number {
+    return this.columns.hidden.includes("refs") ? 0 : this.columns.widths.refs;
+  }
+
+  private columnMenu(at: { x: number; y: number }): void {
+    const items: MenuItem[] = [{ heading: "Columns" }];
+    for (const [id, name] of Object.entries(COLUMN_NAMES) as [ColumnId, string][]) {
+      const shown = !this.columns.hidden.includes(id);
+      items.push({
+        label: name,
+        icon: shown ? "check" : undefined,
+        action: () => {
+          this.columns.hidden = shown ? [...this.columns.hidden, id] : this.columns.hidden.filter((h) => h !== id);
+          saveColumns(this.columns);
+          this.applyColumns();
+          this.invalidate();
+        },
+      });
+    }
+    items.push({ separator: true }, {
+      label: "Fit the graph to its lanes",
+      disabled: !this.columns.widths.graph,
+      action: () => {
+        this.columns.widths.graph = 0;
+        saveColumns(this.columns);
+        this.view.graph && this.setData(this.view.graph, this.view.snapshot?.refs ?? [], this.headOid);
+      },
+    }, {
+      label: "Reset columns",
+      action: () => {
+        this.columns = structuredClone(DEFAULT_COLUMNS);
+        saveColumns(this.columns);
+        this.applyColumns();
+        this.invalidate();
+      },
+    });
+    showMenu(items, at);
+  }
+
+  private resizeColumn(event: PointerEvent, id: ColumnId, grip: HTMLElement): void {
+    event.preventDefault();
+    event.stopPropagation();
+    grip.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const start = id === "graph" && !this.columns.widths.graph ? this.graphWidth : this.columns.widths[id];
+    document.body.classList.add("resizing");
+    const move = (e: PointerEvent) => {
+      // Refs and the graph grow to the right; the others are right of the message, so they grow to the left.
+      const delta = id === "refs" || id === "graph" ? e.clientX - startX : startX - e.clientX;
+      this.columns.widths[id] = Math.round(Math.min(Math.max(start + delta, 48), id === "graph" ? 1000 : 480));
+      if (id === "graph") {
+        this.graphWidth = this.columns.widths.graph;
+        this.root.style.setProperty("--graph-width", `${this.graphWidth}px`);
+      }
+      this.applyColumns();
+      this.schedule();
+    };
+    const up = () => {
+      grip.removeEventListener("pointermove", move);
+      document.body.classList.remove("resizing");
+      saveColumns(this.columns);
+    };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up, { once: true });
+  }
+
+  private renderFilterBar(): void {
+    const f = this.view.filter;
+    const parts: string[] = [];
+    if (f.solo.length) parts.push(`Soloing ${f.solo.map((r) => r.replace(/^refs\/(heads|remotes|tags)\//, "")).join(", ")}`);
+    else {
+      const hiddenBranches = f.hidden.filter((h) => !h.endsWith("/*")).length;
+      if (hiddenBranches) parts.push(`${plural(hiddenBranches, "branch", "branches")} hidden`);
+      if (f.hidden.includes("refs/tags/*")) parts.push("tags hidden");
+      if (f.hidden.some((h) => h.startsWith("refs/remotes/") && h.endsWith("/*"))) parts.push("some remotes hidden");
+    }
+    if (f.hideStashes && !f.solo.length) parts.push("stashes hidden");
+    this.filterBar.hidden = !parts.length;
+    if (!parts.length) return;
+    const reset = el("button", "button-secondary small", "Show everything");
+    reset.type = "button";
+    reset.addEventListener("click", () =>
+      this.view.setFilter((filter) => {
+        filter.hidden = [];
+        filter.solo = [];
+        filter.hideStashes = false;
+      }),
+    );
+    this.filterBar.replaceChildren(icon("eyeOff", 14), el("span", "", parts.join(" · ")), reset);
+  }
+
+  /** Offers to write a commit-graph when the history loaded slowly without one. */
+  private renderIndexBar(): void {
+    const took = this.view.slowHistory;
+    const root = this.view.info.root;
+    this.indexBar.hidden = took === null || indexOfferDismissed(root);
+    if (this.indexBar.hidden || this.indexBar.dataset.indexing) return;
+    const index = el("button", "button-secondary small", "Index history");
+    index.type = "button";
+    index.addEventListener("click", async () => {
+      this.indexBar.dataset.indexing = "1";
+      index.disabled = true;
+      index.textContent = "Indexing…";
+      try {
+        await this.view.actions.indexHistory();
+      } finally {
+        delete this.indexBar.dataset.indexing;
+        this.renderIndexBar();
+      }
+    });
+    const later = iconButton("close", "Not now", () => {
+      dismissIndexOffer(root);
+      this.indexBar.hidden = true;
+    }, "icon-button small");
+    this.indexBar.replaceChildren(
+      icon("speed", 14),
+      el(
+        "span",
+        "",
+        `Loading this history took ${(took! / 1000).toFixed(1)} s. Git can index it (a commit-graph) to make the graph and file history much faster.`,
+      ),
+      index,
+      later,
+    );
+  }
+
+  /** Searches every commit, for when the match isn't among those loaded. */
+  private async searchEverywhere(): Promise<void> {
+    const query = this.searchInput.value.trim();
+    if (!query) return;
+    this.results.hidden = false;
+    this.results.replaceChildren(el("div", "search-result-note", "Searching…"));
+    let found: GraphCommit[];
+    try {
+      found = await api.searchCommits(this.view.id, query, 200);
+    } catch (error) {
+      this.results.replaceChildren(el("div", "search-result-note", errorMessage(error)));
+      return;
+    }
+    const close = iconButton("close", "Close", () => (this.results.hidden = true), "icon-button small");
+    this.results.replaceChildren(el("div", "search-result-head", el("span", "", `${plural(found.length, "commit")} in all history${found.length === 200 ? " (the newest 200)" : ""}`), close));
+    for (const commit of found) {
+      const loaded = this.indexOf(commit.oid) >= 0;
+      const row = el(
+        "div",
+        `search-result${loaded ? "" : " outside"}`,
+        el("span", "mono", shortSha(commit.oid)),
+        el("span", "search-result-subject", commit.subject),
+        el("span", "search-result-meta", `${commit.author} · ${relativeTime(commit.authorTime)}`),
+      );
+      row.title = loaded ? "Show in the graph" : "Not among the loaded commits: shows its details";
+      row.addEventListener("click", () => {
+        if (loaded) this.view.selectCommit(commit.oid, { scroll: "center" });
+        else void this.view.detail.show(commit.oid);
+      });
+      this.results.append(row);
+    }
+    if (!found.length) this.results.append(el("div", "search-result-note", "Nothing anywhere in the history matches."));
   }
 
   private renderRow(index: number): HTMLElement {
     const commit = this.graph.commits[index];
     const layout = this.graph.rows[index];
     const color = laneColor(layout?.color ?? 0);
-    const selected = this.view.selectedOid() === commit.oid;
+    const selected = this.view.isSelected(commit.oid);
     const row = el("div", "graph-row");
     row.style.top = `${index * ROW}px`;
     row.style.setProperty("--lane-color", color);
@@ -259,7 +554,7 @@ export class GraphView {
 
     row.append(this.refsCell(commit, color), el("div", "col col-graph"));
     if (commit.kind === "workInProgress") {
-      row.append(this.wipCell(), el("div", "col col-author"), el("div", "col col-date"), el("div", "col col-sha"));
+      row.append(this.wipCell(), el("div", "col col-author"), el("div", "col col-changes"), el("div", "col col-date"), el("div", "col col-sha"));
     } else {
       const message = el("div", "col col-message");
       if (commit.kind === "stash") message.append(icon("stash", 13));
@@ -268,12 +563,15 @@ export class GraphView {
       author.title = commit.email ? `${commit.author} <${commit.email}>` : commit.author;
       const date = el("div", "col col-date mono", formatTime(commit.authorTime, this.view.settings().dateFormat));
       date.title = new Date(commit.authorTime * 1000).toLocaleString();
-      row.append(message, author, date, el("div", "col col-sha mono", shortSha(commit.oid)));
+      const changes = el("div", "col col-changes");
+      this.fillChanges(changes, commit.oid);
+      row.append(message, author, changes, date, el("div", "col col-sha mono", shortSha(commit.oid)));
     }
 
     row.addEventListener("mousedown", (event) => {
       if (event.button !== 0) return;
-      this.view.selectCommit(commit.oid, {});
+      const toggle = isMac ? event.metaKey : event.ctrlKey;
+      this.view.selectCommit(commit.oid, { mode: event.shiftKey ? "range" : toggle ? "toggle" : "single" });
       this.focus();
     });
     row.addEventListener("dblclick", (event) => {
@@ -283,8 +581,13 @@ export class GraphView {
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       const chip = (event.target as Element).closest<HTMLElement>(".ref-chip");
-      this.view.selectCommit(commit.oid, {});
       const point = { x: event.clientX, y: event.clientY };
+      // Right-clicking inside a multi-selection acts on all of it.
+      if (!chip && this.view.selection().length > 1 && this.view.isSelected(commit.oid)) {
+        this.view.actions.multiMenu(this.view.selection(), point);
+        return;
+      }
+      this.view.selectCommit(commit.oid, {});
       if (chip?.dataset.ref) {
         this.view.actions.refMenu(chip.dataset.ref, point);
       } else {
@@ -321,11 +624,28 @@ export class GraphView {
       }
       // Only the first label fits; the rest are counted.
       if (i > 0) chip.classList.add("extra");
+      if (!label.tag) chip.addEventListener("pointerdown", (event) => startRefDrag(this.view, chip.dataset.ref!, event));
       cell.append(chip);
     });
     if (labels.length > 1) {
-      const more = el("span", "ref-more", `+${labels.length - 1}`);
+      const more = el("button", "ref-more", `+${labels.length - 1}`);
+      more.type = "button";
       more.title = labels.map((l) => l.name).join("\n");
+      more.addEventListener("mousedown", (event) => event.stopPropagation());
+      more.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const at = { x: event.clientX, y: event.clientY };
+        showMenu(
+          [
+            { heading: "Branches and tags here" },
+            ...labels.map((label) => {
+              const ref = label.tag ?? label.local ?? label.remotes[0];
+              return { label: label.name, icon: label.tag ? ("tag" as const) : label.isHead ? ("check" as const) : ("branch" as const), action: () => this.view.actions.refMenu(ref.name, at) };
+            }),
+          ],
+          at,
+        );
+      });
       cell.append(more);
     }
     return cell;
@@ -359,7 +679,7 @@ export class GraphView {
     const height = rows * ROW;
     const canvas = this.canvas;
     canvas.style.top = `${top}px`;
-    canvas.style.left = `${REFS_WIDTH}px`;
+    canvas.style.left = `${this.refsWidth()}px`;
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
@@ -372,10 +692,11 @@ export class GraphView {
     ctx.clearRect(0, 0, width, height);
     if (rows === 0) return;
 
+    const styles = getComputedStyle(document.documentElement);
+    const background = styles.getPropertyValue("--deep-night").trim() || "#1b1a23";
+    const foreground = styles.getPropertyValue("--fg").trim() || "#f8f8f2";
     const x = (lane: number) => PAD + lane * LANE + LANE / 2;
     const y = (index: number) => index * ROW + ROW / 2 - top;
-    const selected = this.view.selectedOid();
-
     // Lines first, so dots sit on top. Row i's edges come from row i - 1;
     // the row below the last visible one still draws into view.
     ctx.lineWidth = 2;
@@ -414,7 +735,7 @@ export class GraphView {
       if (commit.kind === "workInProgress") {
         ctx.setLineDash([3, 2]);
         ctx.strokeStyle = color;
-        ctx.fillStyle = "#1b1a23";
+        ctx.fillStyle = background;
         circle(ctx, cx, cy, 9);
         ctx.fill();
         ctx.stroke();
@@ -422,7 +743,7 @@ export class GraphView {
       } else if (commit.kind === "stash") {
         ctx.setLineDash([2, 2]);
         ctx.strokeStyle = color;
-        ctx.fillStyle = "#1b1a23";
+        ctx.fillStyle = background;
         ctx.beginPath();
         ctx.roundRect(cx - 8, cy - 8, 16, 16, 4);
         ctx.fill();
@@ -440,15 +761,16 @@ export class GraphView {
         ctx.fill();
         ctx.stroke();
         if (this.view.settings().showAvatars) {
-          ctx.fillStyle = "#1b1a23";
+          ctx.fillStyle = background;
           ctx.font = "700 9px Inter, sans-serif";
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText(initials(commit.author), cx, cy + 0.5);
         }
       }
-      if (commit.oid === selected || commit.oid === this.headOid) {
-        ctx.strokeStyle = commit.oid === selected ? "#f8f8f2" : color;
+      const isSelected = this.view.isSelected(commit.oid);
+      if (isSelected || commit.oid === this.headOid) {
+        ctx.strokeStyle = isSelected ? foreground : color;
         ctx.lineWidth = 1.5;
         circle(ctx, cx, cy, commit.parents.length > 1 && commit.kind === "commit" ? 9 : 13);
         ctx.stroke();
@@ -497,3 +819,21 @@ function buildLabels(refs: Ref[]): Map<string, RefLabel[]> {
 }
 
 export { WORK_IN_PROGRESS };
+
+const INDEX_DISMISSED_KEY = "gitcthulhu.indexOfferDismissed:";
+
+function indexOfferDismissed(root: string): boolean {
+  try {
+    return localStorage.getItem(INDEX_DISMISSED_KEY + root) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function dismissIndexOffer(root: string): void {
+  try {
+    localStorage.setItem(INDEX_DISMISSED_KEY + root, "1");
+  } catch {
+    // Storage is unavailable; the offer comes back next time.
+  }
+}

@@ -226,16 +226,86 @@ pub fn partial_patch(
     selected: Option<&[usize]>,
     direction: Direction,
 ) -> Result<String> {
-    let hunk = file
-        .hunks
-        .get(hunk)
-        .ok_or_else(|| Error::Invalid("that change is no longer in the file".into()))?;
+    partial_patch_multi(
+        file,
+        &[HunkSelection {
+            hunk,
+            lines: selected,
+        }],
+        direction,
+    )
+}
+
+/// Lines chosen from one hunk; `None` means all of them.
+#[derive(Debug, Clone, Copy)]
+pub struct HunkSelection<'a> {
+    pub hunk: usize,
+    pub lines: Option<&'a [usize]>,
+}
+
+/// Like [`partial_patch`], for chosen lines in several hunks at once. Later
+/// hunks start where the earlier ones, as partially applied, leave them.
+pub fn partial_patch_multi(
+    file: &FileDiff,
+    selections: &[HunkSelection],
+    direction: Direction,
+) -> Result<String> {
+    let mut selections = selections.to_vec();
+    selections.sort_by_key(|s| s.hunk);
+    selections.dedup_by_key(|s| s.hunk);
+    if selections.is_empty() {
+        return Err(Error::Invalid(
+            "select at least one added or removed line".into(),
+        ));
+    }
+    let mut patch = file.header.clone();
+    // How far the side being produced has shifted from the earlier hunks.
+    let mut offset: i64 = 0;
+    for selection in &selections {
+        let hunk = file
+            .hunks
+            .get(selection.hunk)
+            .ok_or_else(|| Error::Invalid("that change is no longer in the file".into()))?;
+        let (body, old_lines, new_lines) = build_hunk(hunk, selection.lines, direction)?;
+        // The side the patch is applied to is unchanged, so its range is the
+        // original one; the other side starts at the same place, shifted.
+        let (old_start, new_start) = match direction {
+            Direction::Forward => (
+                hunk.old_start,
+                shift(other_start(hunk.old_start, old_lines, new_lines), offset),
+            ),
+            Direction::Reverse => (
+                shift(other_start(hunk.new_start, new_lines, old_lines), offset),
+                hunk.new_start,
+            ),
+        };
+        offset += match direction {
+            Direction::Forward => i64::from(new_lines) - i64::from(old_lines),
+            Direction::Reverse => i64::from(old_lines) - i64::from(new_lines),
+        };
+        patch.push_str(&format!(
+            "@@ -{old_start},{old_lines} +{new_start},{new_lines} @@\n"
+        ));
+        patch.push_str(&body);
+    }
+    Ok(patch)
+}
+
+fn shift(start: u32, offset: i64) -> u32 {
+    (i64::from(start) + offset).max(0) as u32
+}
+
+/// One hunk's lines for a partial patch, with its old and new line counts.
+fn build_hunk(
+    hunk: &Hunk,
+    selected: Option<&[usize]>,
+    direction: Direction,
+) -> Result<(String, u32, u32)> {
     let chosen = |i: usize| selected.is_none_or(|s| s.contains(&i));
     let (keep_as_context, drop) = match direction {
         Direction::Forward => (LineKind::Removed, LineKind::Added),
         Direction::Reverse => (LineKind::Added, LineKind::Removed),
     };
-
     let mut body = String::new();
     let (mut old_lines, mut new_lines) = (0u32, 0u32);
     let mut changed = false;
@@ -285,21 +355,7 @@ pub fn partial_patch(
             "select at least one added or removed line".into(),
         ));
     }
-
-    // The side the patch is applied to is unchanged, so its range is the
-    // original one; the other side starts at the same place.
-    let (old_start, new_start) = match direction {
-        Direction::Forward => (
-            hunk.old_start,
-            other_start(hunk.old_start, old_lines, new_lines),
-        ),
-        Direction::Reverse => (
-            other_start(hunk.new_start, new_lines, old_lines),
-            hunk.new_start,
-        ),
-    };
-    let header = format!("@@ -{old_start},{old_lines} +{new_start},{new_lines} @@\n");
-    Ok(format!("{}{header}{body}", file.header))
+    Ok((body, old_lines, new_lines))
 }
 
 /// A range with no lines names the line before it, so `-5,0` and `+6,2`

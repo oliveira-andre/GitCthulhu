@@ -27,7 +27,16 @@ export type ShortcutId =
   | "search"
   | "filterRefs"
   | "settings"
-  | "refresh";
+  | "refresh"
+  | "fileHistory"
+  | "toggleTerminal"
+  | "undo"
+  | "redo"
+  | "redoAlt"
+  | "zoomIn"
+  | "zoomOut"
+  | "zoomReset"
+  | "shortcuts";
 
 /** Combos are written for macOS; `mod` is ⌘ there and Ctrl elsewhere. */
 export const SHORTCUTS: Record<ShortcutId, { combo: string; label: string }> = {
@@ -55,6 +64,15 @@ export const SHORTCUTS: Record<ShortcutId, { combo: string; label: string }> = {
   filterRefs: { combo: "mod+alt+f", label: "Filter branches" },
   settings: { combo: "mod+,", label: "Preferences" },
   refresh: { combo: "mod+r", label: "Refresh" },
+  fileHistory: { combo: "mod+shift+h", label: "File history" },
+  toggleTerminal: { combo: "mod+`", label: "Toggle terminal" },
+  undo: { combo: "mod+z", label: "Undo" },
+  redo: { combo: "mod+shift+z", label: "Redo" },
+  redoAlt: { combo: "mod+y", label: "Redo" },
+  zoomIn: { combo: "mod+=", label: "Zoom in" },
+  zoomOut: { combo: "mod+-", label: "Zoom out" },
+  zoomReset: { combo: "mod+0", label: "Actual size" },
+  shortcuts: { combo: "mod+/", label: "Keyboard shortcuts" },
 };
 
 export function comboOf(event: KeyboardEvent): string {
@@ -70,6 +88,10 @@ export function comboOf(event: KeyboardEvent): string {
   if (event.code.startsWith("Key")) key = event.code.slice(3).toLowerCase();
   else if (event.code.startsWith("Digit")) key = event.code.slice(5);
   else if (event.code === "Comma") key = ",";
+  else if (event.code === "Backquote") key = "`";
+  else if (event.code === "Equal") key = "=";
+  else if (event.code === "Minus") key = "-";
+  else if (event.code === "Slash") key = "/";
   parts.push(key);
   return parts.join("+");
 }

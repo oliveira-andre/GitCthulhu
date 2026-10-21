@@ -24,6 +24,12 @@ const VIEW: &[(&str, &str, Option<&str>)] = &[
     ("toggleRight", "Toggle Commit Panel", Some("CmdOrCtrl+K")),
     ("-", "", None),
     ("refresh", "Refresh", Some("CmdOrCtrl+R")),
+    ("-", "", None),
+    ("zoomIn", "Zoom In", Some("CmdOrCtrl+=")),
+    ("zoomOut", "Zoom Out", Some("CmdOrCtrl+-")),
+    ("zoomReset", "Actual Size", Some("CmdOrCtrl+0")),
+    ("-", "", None),
+    ("shortcuts", "Keyboard Shortcuts", Some("CmdOrCtrl+/")),
 ];
 
 pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {

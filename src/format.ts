@@ -49,9 +49,17 @@ export function initials(name: string): string {
 
 /** Graph lane colors: the design's neons, in the order lanes take them. */
 export const LANE_COLORS = ["#9580FF", "#80FFEA", "#FF80BF", "#8AFF80", "#FFCA80", "#FFFF80", "#FF9580", "#B9AEFF"];
+/** The same hues, dark enough to read on the light theme. */
+const LIGHT_LANE_COLORS = ["#6a4fe0", "#0b847b", "#c2368a", "#1d8f35", "#a86400", "#857500", "#cf432c", "#7d6bd6"];
+
+let palette = LANE_COLORS;
+
+export function setLightPalette(light: boolean): void {
+  palette = light ? LIGHT_LANE_COLORS : LANE_COLORS;
+}
 
 export function laneColor(index: number): string {
-  return LANE_COLORS[index % LANE_COLORS.length];
+  return palette[index % palette.length];
 }
 
 /** A stable avatar color for an email address. */
@@ -60,7 +68,7 @@ export function avatarColor(seed: string): string {
   for (const c of seed.toLowerCase()) {
     hash = (hash * 31 + c.charCodeAt(0)) | 0;
   }
-  return LANE_COLORS[Math.abs(hash) % LANE_COLORS.length];
+  return palette[Math.abs(hash) % palette.length];
 }
 
 export function avatar(name: string, email: string, size = 20): HTMLElement {

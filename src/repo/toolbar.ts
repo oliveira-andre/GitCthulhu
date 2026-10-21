@@ -41,6 +41,8 @@ export class Toolbar {
   private readonly pushBadge = el("span", "badge");
   private readonly stateBanner = el("div", "toolbar-state");
   private readonly actionButtons: HTMLButtonElement[] = [];
+  private readonly undoButton: HTMLButtonElement;
+  private readonly redoButton: HTMLButtonElement;
 
   constructor(private readonly view: RepoView) {
     this.repoButton = this.picker("repo", view.info.name, (b) => this.repoMenu(b));
@@ -55,9 +57,14 @@ export class Toolbar {
     const push = this.action("push", "Push", "push", () => view.actions.push());
     push.append(this.pushBadge);
 
+    this.undoButton = this.action("undo", "Undo", "undo", () => view.actions.undo());
+    this.redoButton = this.action("redo", "Redo", "redo", () => view.actions.redo());
     const center = el(
       "div",
       "toolbar-actions",
+      this.undoButton,
+      this.redoButton,
+      el("span", "toolbar-gap"),
       el("div", "split", pull, pullMenu),
       push,
       this.action("branchPlus", "Branch", "createBranch", () => view.actions.createBranch()),
@@ -68,7 +75,7 @@ export class Toolbar {
       "div",
       "toolbar-right",
       this.tool("search", "Find commits", "search", () => view.graphView.openSearch()),
-      this.tool("terminal", "Open in Terminal", null, () => void api.openTerminal(view.info.root)),
+      this.tool("terminal", "Terminal", "toggleTerminal", () => view.terminal.toggle()),
       this.tool("folderOpen", "Show in file manager", null, () => void api.reveal(view.info.root)),
       this.tool("leftPanel", "Toggle left panel", "toggleLeft", () => view.togglePanel("left")),
       this.tool("rightPanel", "Toggle commit panel", "toggleRight", () => view.togglePanel("right")),
@@ -89,6 +96,11 @@ export class Toolbar {
     this.pushBadge.textContent = ref?.ahead ? `${ref.ahead}` : "";
     this.pushBadge.hidden = !ref?.ahead;
     for (const b of this.actionButtons) b.disabled = this.view.isBusy();
+    const { undo, redo } = snapshot.undo;
+    this.undoButton.disabled ||= !undo;
+    this.redoButton.disabled ||= !redo;
+    this.undoButton.title = undo ? `Undo ${undo.toLowerCase()} (${shortcutLabel("undo")})` : "Nothing to undo";
+    this.redoButton.title = redo ? `Redo ${redo.toLowerCase()} (${shortcutLabel("redo")})` : "Nothing to redo";
 
     const state = snapshot.state;
     const text =
@@ -100,6 +112,8 @@ export class Toolbar {
             ? "Cherry-picking"
             : state.kind === "reverting"
               ? "Reverting"
+              : state.kind === "applyingPatches"
+                ? `Applying patches${state.step && state.total ? ` · ${state.step}/${state.total}` : ""}`
               : state.kind === "bisecting"
                 ? "Bisecting"
                 : "";
@@ -158,11 +172,13 @@ export class Toolbar {
         { label: "Open another repository…", icon: "folderOpen", hint: shortcutLabel("openRepo"), action: () => this.view.shell.openRepoPicker() },
         { label: "New tab", icon: "plus", hint: shortcutLabel("newTab"), action: () => this.view.shell.newTab() },
         { separator: true },
-        { label: "Open in Terminal", icon: "terminal", action: () => void api.openTerminal(this.view.info.root) },
+        { label: "Open in editor", icon: "fileModified", action: () => void this.view.actions.openInEditor(null) },
+        { label: "Open in the system terminal", icon: "terminal", action: () => void api.openTerminal(this.view.info.root) },
         { label: "Show in file manager", icon: "folder", action: () => void api.reveal(this.view.info.root) },
         { label: "Copy path", icon: "copy", action: () => this.view.actions.copy(this.view.info.root, "the path") },
         { separator: true },
         { label: "Add a remote…", icon: "cloud", action: () => this.view.actions.addRemote() },
+        { label: "Apply a patch…", icon: "file", action: () => this.view.actions.applyPatch() },
         { label: "Refresh", icon: "refresh", hint: shortcutLabel("refresh"), action: () => void this.view.refresh() },
       ],
       anchor,

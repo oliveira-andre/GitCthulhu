@@ -9,7 +9,9 @@
     "core:default",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
+    "core:webview:allow-set-webview-zoom",
     "clipboard-manager:allow-write-text",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

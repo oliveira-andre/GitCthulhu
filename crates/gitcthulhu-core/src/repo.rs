@@ -36,6 +36,11 @@ pub enum RepoState {
     Reverting {
         head: Option<String>,
     },
+    /// `git am` stopped partway through a series of patches.
+    ApplyingPatches {
+        step: Option<u32>,
+        total: Option<u32>,
+    },
     Bisecting,
 }
 
@@ -161,6 +166,15 @@ impl Repo {
                 .map(|s| s.trim().to_owned())
                 .filter(|s| !s.is_empty())
         };
+        // `git am` shares rebase-apply with old-style rebases; it marks itself.
+        if dir.join("rebase-apply/applying").is_file() {
+            let number =
+                |name: &str| read(&format!("rebase-apply/{name}")).and_then(|n| n.parse().ok());
+            return RepoState::ApplyingPatches {
+                step: number("next"),
+                total: number("last"),
+            };
+        }
         for rebase_dir in ["rebase-merge", "rebase-apply"] {
             if dir.join(rebase_dir).is_dir() {
                 let file = |name: &str| read(&format!("{rebase_dir}/{name}"));
@@ -202,6 +216,15 @@ impl Repo {
         let message = std::fs::read_to_string(self.git_dir.join("MERGE_MSG")).ok()?;
         let kept: Vec<&str> = message.lines().filter(|l| !l.starts_with('#')).collect();
         Some(kept.join("\n").trim().to_owned()).filter(|m| !m.is_empty())
+    }
+
+    /// Whether git has a commit-graph file. Without one, sorting history
+    /// (`--date-order`) reads every commit first, which takes seconds on a
+    /// long history; `git gc` and `git maintenance` write it.
+    pub fn has_commit_graph(&self) -> bool {
+        let info = self.common_dir.join("objects/info");
+        info.join("commit-graph").is_file()
+            || info.join("commit-graphs/commit-graph-chain").is_file()
     }
 
     pub fn remotes(&self) -> Result<Vec<String>> {

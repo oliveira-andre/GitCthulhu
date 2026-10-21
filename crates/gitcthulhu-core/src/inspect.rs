@@ -144,6 +144,19 @@ pub fn file_diff(
     old_path: Option<&str>,
     context: u32,
 ) -> Result<FileDiff> {
+    file_diff_with(repo, target, path, old_path, context, false)
+}
+
+/// Like [`file_diff`]; `ignore_whitespace` (`-w`) is for reading only, since
+/// patches built from such a diff don't apply to the real file.
+pub fn file_diff_with(
+    repo: &Repo,
+    target: &DiffTarget,
+    path: &str,
+    old_path: Option<&str>,
+    context: u32,
+    ignore_whitespace: bool,
+) -> Result<FileDiff> {
     let unified = format!("-U{context}");
     let mut args: Vec<String> = vec![
         "diff".into(),
@@ -190,6 +203,9 @@ pub fn file_diff(
             check_revision(to)?;
             args.extend([from.clone(), to.clone()]);
         }
+    }
+    if ignore_whitespace {
+        args.push("-w".into());
     }
     args.push("--".into());
     if let Some(old) = old_path.filter(|o| *o != path) {
@@ -270,6 +286,56 @@ pub(crate) fn check_revision(rev: &str) -> Result<()> {
         return Err(Error::Invalid(format!("not a revision: {rev}")));
     }
     Ok(())
+}
+
+/// Where to read a file's contents from, for image diffs.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum BlobSource {
+    Worktree,
+    Index,
+    Revision { rev: String },
+}
+
+/// A file's bytes, or `None` when it doesn't exist there. Refuses files
+/// larger than `max` bytes.
+pub fn blob(repo: &Repo, source: &BlobSource, path: &str, max: usize) -> Result<Option<Vec<u8>>> {
+    let relative = std::path::Path::new(path);
+    if path.is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(Error::Invalid(format!(
+            "not a file in the repository: {path}"
+        )));
+    }
+    let bytes = match source {
+        BlobSource::Worktree => match std::fs::read(repo.root().join(relative)) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.into()),
+        },
+        BlobSource::Index | BlobSource::Revision { .. } => {
+            let spec = match source {
+                BlobSource::Revision { rev } => {
+                    check_revision(rev)?;
+                    format!("{rev}:{path}")
+                }
+                _ => format!(":{path}"),
+            };
+            let out = repo.output(&["cat-file", "blob", &spec])?;
+            if !out.success() {
+                return Ok(None);
+            }
+            out.stdout
+        }
+    };
+    if bytes.len() > max {
+        return Err(Error::Invalid("the file is too large to show".into()));
+    }
+    Ok(Some(bytes))
 }
 
 #[cfg(test)]

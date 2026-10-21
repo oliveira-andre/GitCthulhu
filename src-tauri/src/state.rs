@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use gitcthulhu_core::askpass::{AskpassServer, Prompt};
 use gitcthulhu_core::store::AppData;
+use gitcthulhu_core::terminal::Terminal;
+use gitcthulhu_core::undo::History;
 use gitcthulhu_core::watch::RepoWatcher;
 use gitcthulhu_core::{Git, Repo};
 use serde::Serialize;
@@ -24,14 +26,25 @@ pub struct AppState {
     pub repos: Mutex<HashMap<String, OpenRepo>>,
     pub prompts: Arc<Prompts>,
     pub emit: Emit,
+    /// Embedded terminals by session id.
+    pub terminals: Mutex<HashMap<u64, Arc<Terminal>>>,
+    pub next_terminal: AtomicU64,
     _askpass: Option<AskpassServer>,
 }
 
 pub struct OpenRepo {
-    pub repo: Repo,
-    /// Changes run one at a time per repository; reads don't wait.
-    pub write_lock: Arc<Mutex<()>>,
+    pub handle: RepoHandle,
     pub _watcher: Option<RepoWatcher>,
+}
+
+/// What a command needs of an open repository.
+#[derive(Clone)]
+pub struct RepoHandle {
+    pub repo: Repo,
+    /// Changes run one at a time per repository; reads don't wait. Take it
+    /// before `history`.
+    pub write_lock: Arc<Mutex<()>>,
+    pub history: Arc<Mutex<History>>,
 }
 
 /// Credential prompts waiting for the user, by prompt id.
@@ -122,6 +135,8 @@ impl AppState {
             repos: Mutex::new(HashMap::new()),
             prompts,
             emit,
+            terminals: Mutex::new(HashMap::new()),
+            next_terminal: AtomicU64::new(1),
             _askpass: askpass,
         })
     }
@@ -130,11 +145,9 @@ impl AppState {
         data.save(&self.data_path)
     }
 
-    pub fn repo(&self, id: &str) -> Option<(Repo, Arc<Mutex<()>>)> {
+    pub fn repo(&self, id: &str) -> Option<RepoHandle> {
         let repos = self.repos.lock().unwrap();
-        repos
-            .get(id)
-            .map(|open| (open.repo.clone(), open.write_lock.clone()))
+        repos.get(id).map(|open| open.handle.clone())
     }
 
     pub fn is_open(&self, root: &Path) -> bool {

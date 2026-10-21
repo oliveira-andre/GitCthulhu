@@ -17,7 +17,7 @@ pub fn git_in(dir: &Path) -> Git {
     let config = dir.join("gitconfig");
     std::fs::write(
         &config,
-        "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n",
+        "[user]\n\tname = Test User\n\temail = test@example.com\n[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n[tag]\n\tgpgsign = false\n[protocol \"file\"]\n\tallow = always\n",
     )
     .unwrap();
     Git::find()

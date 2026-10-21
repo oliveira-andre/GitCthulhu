@@ -10,7 +10,7 @@ use crate::error::Result;
 const VERSION: u32 = 1;
 const MAX_RECENT: usize = 30;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     /// How many commits the graph loads.
@@ -25,6 +25,33 @@ pub struct Settings {
     /// Width of the left and right panels, in pixels.
     pub left_panel_width: u32,
     pub right_panel_width: u32,
+    pub diff_layout: DiffLayout,
+    /// Diffs hide whitespace-only changes (staging hunks is then off).
+    pub ignore_whitespace: bool,
+    /// The command that opens files and folders, for example `code` or
+    /// `zed`; empty uses the system's default app.
+    pub editor: String,
+    /// The UI's color theme.
+    pub theme: Theme,
+    /// Zoom factor for the whole window.
+    pub zoom: f64,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum Theme {
+    Dark,
+    Light,
+    /// Follows the system's appearance.
+    System,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DiffLayout {
+    Unified,
+    /// Old and new side by side.
+    Split,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -44,6 +71,11 @@ impl Default for Settings {
             show_avatars: true,
             left_panel_width: 260,
             right_panel_width: 380,
+            diff_layout: DiffLayout::Unified,
+            ignore_whitespace: false,
+            editor: String::new(),
+            theme: Theme::Dark,
+            zoom: 1.0,
         }
     }
 }
@@ -59,7 +91,7 @@ pub struct RecentRepo {
     pub favorite: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppData {
     pub version: u32,

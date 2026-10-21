@@ -22,7 +22,10 @@ cargo test -p gitcthulhu                # IPC tests through Tauri's mock runtime
 cargo clippy --workspace --all-targets  # kept at zero warnings
 cargo fmt --all
 npx tauri build --debug --bundles app   # debug GitCthulhu.app in target/debug/bundle/macos
+cargo run --release -p gitcthulhu-core --example bench -- <repo> [limit]   # time the snapshot, graph and search queries (read-only)
 ```
+
+Large real repositories on this machine for `bench`: `~/homebrew-cask` (442k commits, no commit-graph) and `/opt/homebrew` (53k). They belong to the owner, so only read them. To try something that writes, use `git clone --local --no-checkout` into the scratchpad, which hard-links the objects.
 
 ## Architecture
 
@@ -36,15 +39,23 @@ Keep logic in the lowest layer that can hold it.
   - English messages (`LANGUAGE`/`LC_MESSAGES=C`), because error text is matched, for example "not fully merged" or "would be overwritten";
   - stdin set to null.
 
-  `run_progress` streams `--progress` lines (split on `\r` and `\n`). Windows gets `CREATE_NO_WINDOW`.
-- `repo`: `Repo::open` (from any subdirectory; bare repositories are refused), `init`, `head`, `state` (merge, rebase with step/total, cherry-pick, revert, bisect, read from the git dir), `prepared_message` (MERGE_MSG).
+  `run_progress` streams `--progress` lines (split on `\r` and `\n`). `stream` hands over NUL-terminated stdout records as they arrive and kills git when the callback returns `false` (search stops early that way). Windows gets `CREATE_NO_WINDOW`.
+- `repo`: `Repo::open` (from any subdirectory; bare repositories are refused), `init`, `head`, `state` (merge, rebase with step/total, cherry-pick, revert, `git am`, bisect, read from the git dir), `prepared_message` (MERGE_MSG), `has_commit_graph`.
 - `refs`: `for-each-ref`, with tags peeled and remote names matched against `git remote` (they can contain `/`). Local branches carry upstream, ahead/behind and gone. Sorting is natural: v2 before v10.
-- `log` + `graph`: `log::load` runs `git log --date-order --exclude=refs/stash --all HEAD <stash oids>`. It drops the stashes' internal index and untracked commits, cuts stash parents down to the first, and prepends a `work-in-progress` row (parent HEAD) when asked. `graph::layout` assigns lanes. Each row's `edges` run from the row above into it, and joins merge into an existing lane. Its unit tests pin the layout.
+- `log` + `graph`: `log::load` runs `git log --date-order --exclude=refs/stash --all HEAD <stash oids>`. It drops the stashes' internal index and untracked commits, cuts stash parents down to the first, and prepends a `work-in-progress` row (parent HEAD) when asked. `RefFilter` hides or solos refs (`--exclude` must come before `--all`). `Graph.indexed` says whether a commit-graph exists: without one, `--date-order` reads the whole history first (1.8 s on homebrew-cask, 0.18 s with one), and the UI offers `ops::write_commit_graph` after a slow load. `graph::layout` assigns lanes. Each row's `edges` run from the row above into it, and joins merge into an existing lane. Its unit tests pin the layout.
+  - `search` is one `log -z --all` walk matched in Rust (message, author name or email), because git ANDs `--author` with `--grep`. `commit_stats` feeds the Changes column.
 - `status`: `status --porcelain=v2 -z --untracked-files=all`, giving staged, unstaged and conflicted lists.
 - `diff` + `inspect`: unified diff parsing; `partial_patch` builds hunk and line patches (rules below); `file_diff` for unstaged (untracked files use `--no-index`), staged, a commit (vs. its first parent; root commits via `diff-tree --root`) or a range; `commit_details`; `changed_files`.
-- `ops`: every change. Merge, rebase, cherry-pick, revert and pull map failures in a non-clean state to `Error::Conflicts`. `sequence` continues, aborts or skips whatever is in progress; a merge "continues" by committing. Names and revisions starting with `-` are refused, and commit and tag messages go through stdin.
+- `ops`: every change. Merge, rebase, cherry-pick, revert, `am` and pull map failures in a non-clean state to `Error::Conflicts`. `sequence` continues, aborts or skips whatever is in progress; a merge "continues" by committing. Names and revisions starting with `-` are refused, and commit and tag messages go through stdin. Line staging is `apply_selection` (several hunks at once, with the diff's context size). Also commit options and identity, stash by paths/rename/untracked, patches (`format_patch`, `apply_patch` with `--3way`), remote edits and upstreams.
+- `rebase`: interactive rebase. `GIT_SEQUENCE_EDITOR="cp '<todo>'"` copies in the plan the UI built; rewords are `exec git commit --amend -F <file>`, so no editor runs. Scratch files live in `<gitdir>/gitcthulhu-rebase`.
+- `undo`: `History` per repository. Each entry records HEAD and the branch and tag tips before and after (`RefState`); commits undo with a soft reset, other history changes with `reset --keep`. Discards back up file contents first; stashes record `StashDrop`/`StashPush`. An operation stopped on conflicts is `suspend`ed and recorded when `sequence` finishes it. Undo refuses when refs moved outside the app.
+- `conflict`: the merge tool's data, from stages 1–3 merged with `git merge-file -p --diff3`; `resolve` and `resolve_deleted` write and stage.
+- `history`: `file_history` (follows renames), `blame` (porcelain), `tracked_files`.
+- `submodules`, `worktrees`, `lfs`, `gitflow` (built in, using git-flow's `gitflow.*` config keys).
+- `terminal`: the user's login shell in a PTY (portable-pty), adapted from Hostly.
+- `discover`: finds repositories under a folder (skips `node_modules` and the like).
 - `askpass`: a loopback TCP server with a random token. `configure` sets `GIT_ASKPASS`, `SSH_ASKPASS`, `SSH_ASKPASS_REQUIRE=force` and the port and token variables. `run_if_helper` is the client mode of the app's own executable.
-- `watch`: notify, quiet for 300 ms, then a `Change { refs, files }` classified from git-dir paths. Batches where every file is ignored are dropped via `check-ignore --stdin`.
+- `watch`: notify, quiet for 300 ms, then a `Change { refs, files }` classified from git-dir paths. While writes keep coming it still reports after at most 2 s (`MAX_WAIT`), and never more than once a second (`MIN_GAP`). Batches where every file is ignored are dropped via `check-ignore --stdin`.
 - `store`: `AppData` (recent repos, tabs, settings) in `state.json`, versioned, written with write-then-rename, and tolerant of missing fields.
 
 ### `src-tauri`
@@ -53,11 +64,12 @@ Keep logic in the lowest layer that can hold it.
 - `state.rs`: `AppState` holds the open repositories keyed by root path, each with its watcher and write lock. It also holds pending askpass prompts and an `Emit` closure; events go through it rather than an `AppHandle`, so commands are runtime-generic. `GITCTHULHU_DATA_DIR` overrides the data folder.
 - `lib.rs`: the `handlers!` macro is the single command list, used by `run()` and by `tests.rs`. A new command goes there, in `src/api.ts`, and ideally in `tests.rs`.
 - `menu.rs` (macOS only; other platforms have no menu bar and use the same shortcuts): the GitCthulhu, File, Edit, View and Window menus.
-  - Our items emit `menu` with their id, which is a UI command name (`newTab`, `openRepo`, `cloneRepo`, `initRepo`, `reopenTab`, `closeTab`, `palette`, `search`, `toggleLeft`, `toggleRight`, `refresh`, `settings`).
+  - Our items emit `menu` with their id, which is a UI command name (`newTab`, `openRepo`, `cloneRepo`, `initRepo`, `reopenTab`, `closeTab`, `palette`, `search`, `toggleLeft`, `toggleRight`, `refresh`, `settings`, `zoomIn`, `zoomOut`, `zoomReset`, `shortcuts`).
   - `main.ts` `runCommand` handles both menu events and keyboard shortcuts. Menu accelerators take the key before the page does, so the two paths must agree.
   - ⌘W closes a tab, so the predefined Close Window item (also ⌘W) is left out.
 - Events: `repo-changed { id, refs, files }` and `askpass-prompt { id, text, kind }`. Answers come back via `answer_prompt`.
-- Window: `titleBarStyle: Overlay`, hidden title, min 950×640. The tab strip is the drag region (`core:window:allow-start-dragging`). Capabilities: `core:default`, window dragging, clipboard write, and dialog open.
+- `write_commit_graph` runs through `read`, not `write`: git locks the file itself, and holding the repository's write lock for the minute it can take would block every change.
+- Window: `titleBarStyle: Overlay`, hidden title, min 950×640. The tab strip is the drag region (`core:window:allow-start-dragging`). Capabilities: `core:default`, window dragging and maximize, webview zoom, clipboard write, and dialog open and save.
 
 ### `src/` (UI)
 
@@ -65,10 +77,13 @@ Keep logic in the lowest layer that can hold it.
 - `workspace.ts`: tabs (repo or new-tab), restore and save, the palette's item list, and Preferences. It implements `Shell` for repository views.
   - Open, Clone and New repository (from the File menu, ⌘O, the palette or the toolbar's repo menu) run the shared flows in `welcome.ts`. They give the repository its own tab, just like + then picking it. A new-tab page in front is reused, an already-open repository just activates its tab, and cancelling changes nothing.
 - `repo/repo-view.ts`: owns `snapshot` and `graph` and the selection. `refresh()` coalesces calls; it reloads the graph when asked, when HEAD moved, or when the WIP row appears or disappears. `run()` and `attempt()` give every operation the same feedback: progress toasts, conflicts explained, then a refresh.
-- `repo/graph-view.ts`: the virtualized rows plus a canvas covering only the visible range. ROW 28 and LANE 20 roughly follow GitKraken's 28/22. Columns hide at container widths (sha < 980, date < 840, author < 680).
+- `repo/graph-view.ts`: the virtualized rows plus a canvas covering only the visible range. ROW 28 and LANE 20 roughly follow GitKraken's 28/22. Columns hide at container widths (sha < 980, date < 840, author < 680), and can be resized or hidden (saved in localStorage; graph width 0 = fit the lanes). Above the header: the filter bar (hidden/soloed refs) and the index bar (offered when `repoView.slowHistory` is set). `invalidate()` draws synchronously.
 - `repo/detail-panel.ts`: the WIP staging lists, the composer (its draft survives refreshes; amend swaps in HEAD's message and back) and commit or stash details.
 - `repo/diff-view.ts`: replaces the graph while open (Esc closes it). Click line numbers to select lines (⇧ for a range, one hunk at a time). Hunk buttons become "Stage N lines".
-- `repo/actions.ts`: every operation with its dialogs, plus the ref and commit context menus. `repo/toolbar.ts` and `repo/ref-panel.ts` are the remaining pieces.
+- `repo/actions.ts`: every operation with its dialogs, plus the ref, commit and multi-select context menus. `repo/extras-actions.ts` covers submodules, worktrees, LFS and Gitflow.
+- Views that replace the graph (`repoView.showCenter`): `diff-view.ts`, `rebase-view.ts`, `merge-view.ts`, `history-view.ts`. `terminal-panel.ts` docks xterm under the graph; `ref-drag.ts` is label drag and drop. `repo/toolbar.ts` and `repo/ref-panel.ts` are the remaining pieces.
+- `code/`: syntax highlighting with a hand-picked Prism build (`prism-manual.ts`, `syntax.ts`), word-level changes (`word-diff.ts`) and `render.ts`, which builds lines from tokens without `innerHTML`.
+- `appearance.ts`: theme (dark, light via `:root[data-theme="light"]`, or system) and zoom (the webview zoom, in fixed steps).
 - `platform.ts`: the shortcut table, which handlers, tooltips and the palette all read. `main.ts` handles shortcuts in a capture-phase listener; dialogs and the palette take precedence.
 - `dialogs.ts` (a promise-based `form()`, `confirmAction`, `promptText`, `refNameProblem`), `menu.ts`, `toast.ts`, `palette.ts` (fuzzy scoring), `askpass.ts` (a sequential prompt queue), `welcome.ts`.
 

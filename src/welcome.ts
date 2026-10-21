@@ -1,8 +1,8 @@
 // A new tab: open, clone or create a repository, or pick a recent one.
 import { open } from "@tauri-apps/plugin-dialog";
-import { type AppInfo, type RecentRepo, api, errorMessage } from "./api";
+import { type AppInfo, type CloneOptions, type RecentRepo, api, errorMessage } from "./api";
 import { brandMark } from "./brand";
-import { form } from "./dialogs";
+import { form, infoDialog } from "./dialogs";
 import { el } from "./dom";
 import { relativeTime } from "./format";
 import { type IconName, icon, iconButton } from "./icons";
@@ -17,6 +17,7 @@ export interface RepoOpener {
 
 export interface WelcomeHost extends RepoOpener {
   recent(): RecentRepo[];
+  addRecent(paths: string[]): Promise<void>;
   setFavorite(path: string, favorite: boolean): Promise<void>;
   forget(path: string): Promise<void>;
 }
@@ -49,6 +50,7 @@ export class WelcomeView {
           card("folderOpen", "Open a repository", `Browse to a folder (${shortcutLabel("openRepo")})`, () => void this.browse()),
           card("clone", "Clone a repository", "From a URL or a path", () => void this.clone()),
           card("folderPlus", "Start a new repository", "git init in a folder", () => void this.init()),
+          card("search", "Find repositories", "Scan a folder and add what's in it", () => void this.scan()),
         ),
         el("h2", "welcome-heading", "Recent repositories"),
         this.recentList,
@@ -103,6 +105,48 @@ export class WelcomeView {
   init(): Promise<void> {
     return initRepoFlow(this.host);
   }
+
+  /** Scans a folder for repositories and offers to add them to the recent list. */
+  async scan(): Promise<void> {
+    const root = await open({ directory: true, title: "Find repositories in" });
+    if (typeof root !== "string") return;
+    const notice = toast("progress", "Looking for repositories", root);
+    let found: string[];
+    try {
+      found = await api.findRepositories(root);
+    } catch (error) {
+      notice.done("error", "Couldn't scan the folder", errorMessage(error));
+      return;
+    }
+    notice.close();
+    const known = new Set(this.host.recent().map((r) => r.path));
+    const fresh = found.filter((path) => !known.has(path));
+    const list = el("div", "recent-list scan-list");
+    for (const path of found) {
+      const name = path.split(/[\\/]/).pop() ?? path;
+      const openButton = el("button", "button-secondary small", "Open");
+      openButton.type = "button";
+      openButton.addEventListener("click", () => {
+        document.querySelector<HTMLDialogElement>("dialog[open]")?.close();
+        void this.host.openRepo(path);
+      });
+      list.append(
+        el("div", "recent-row", icon("repo", 16), el("span", "recent-text", el("span", "recent-name", name), el("span", "recent-path mono", path)), known.has(path) ? el("span", "recent-when", "already listed") : null, openButton),
+      );
+    }
+    if (!found.length) list.append(el("p", "recent-empty", "No repositories in that folder or the four levels below it."));
+    if (fresh.length) {
+      const addAll = el("button", "button-primary small", `Add ${fresh.length} to recent repositories`);
+      addAll.type = "button";
+      addAll.addEventListener("click", async () => {
+        await this.host.addRecent(fresh);
+        this.render();
+        document.querySelector<HTMLDialogElement>("dialog[open]")?.close();
+      });
+      list.prepend(el("div", "scan-actions", addAll));
+    }
+    await infoDialog(`${found.length} repositor${found.length === 1 ? "y" : "ies"} in ${root.split(/[\\/]/).pop()}`, list);
+  }
 }
 
 /** Picks a folder and opens it, like the File menu's Open Repository. */
@@ -112,49 +156,47 @@ export async function browseForRepo(host: RepoOpener): Promise<void> {
 }
 
 export async function cloneRepoFlow(host: RepoOpener): Promise<void> {
-  const home = host.info.home ?? "";
-  let parent = home;
   const result = await form({
     title: "Clone a repository",
     fields: [
       { name: "url", label: "Repository URL", type: "text", placeholder: "https://github.com/owner/repo.git", mono: true },
-      { name: "parent", label: "Clone into this folder", type: "text", value: parent, mono: true, hint: "A new folder named after the repository is made inside it." },
+      {
+        name: "parent",
+        label: "Clone into this folder",
+        type: "text",
+        value: host.info.home ?? "",
+        mono: true,
+        hint: "A new folder named after the repository is made inside it.",
+        browse: async () => {
+          const picked = await open({ directory: true, title: "Clone into" });
+          return typeof picked === "string" ? picked : null;
+        },
+      },
       { name: "name", label: "Folder name", type: "text", placeholder: "Taken from the URL", mono: true },
+      { name: "branch", label: "Branch", type: "text", placeholder: "The remote's default", mono: true },
+      { name: "single", label: "Only that branch", type: "checkbox", value: false },
+      { name: "shallow", label: "Only the latest commit (shallow clone)", type: "checkbox", value: false },
+      { name: "submodules", label: "Include submodules", type: "checkbox", value: true },
     ],
     confirmLabel: "Clone",
-    extra: [{ label: "Browse…", value: "browse" }],
     validate: (v) => (!String(v.url).trim() ? "Enter the repository's URL." : !String(v.parent).trim() ? "Choose where to put it." : null),
   });
   if (!result) return;
-  if (result.button === "browse") {
-    const picked = await open({ directory: true, title: "Clone into" });
-    if (typeof picked === "string") parent = picked;
-    // Ask again with the chosen folder.
-    return cloneWith(host, String(result.url), parent, String(result.name));
-  }
-  await runClone(host, String(result.url), String(result.parent), String(result.name));
+  const options: CloneOptions = {
+    depth: result.shallow ? 1 : null,
+    branch: String(result.branch).trim() || null,
+    singleBranch: Boolean(result.single),
+    recurseSubmodules: Boolean(result.submodules),
+  };
+  await runClone(host, String(result.url), String(result.parent), String(result.name), options);
 }
 
-async function cloneWith(host: RepoOpener, url: string, parent: string, name: string): Promise<void> {
-  const result = await form({
-    title: "Clone a repository",
-    fields: [
-      { name: "url", label: "Repository URL", type: "text", value: url, mono: true },
-      { name: "parent", label: "Clone into this folder", type: "text", value: parent, mono: true },
-      { name: "name", label: "Folder name", type: "text", value: name, placeholder: "Taken from the URL", mono: true },
-    ],
-    confirmLabel: "Clone",
-    validate: (v) => (!String(v.url).trim() ? "Enter the repository's URL." : null),
-  });
-  if (result) await runClone(host, String(result.url), String(result.parent), String(result.name));
-}
-
-async function runClone(host: RepoOpener, url: string, parent: string, name: string): Promise<void> {
+async function runClone(host: RepoOpener, url: string, parent: string, name: string, options: CloneOptions): Promise<void> {
   const folder = name.trim() || repoNameFromUrl(url);
   const dest = `${parent.replace(/[\\/]+$/, "")}/${folder}`;
   const notice = toast("progress", `Cloning ${folder}`);
   try {
-    const repo = await api.cloneRepo(url.trim(), dest, (line) => notice.update(line));
+    const repo = await api.cloneRepo(url.trim(), dest, options, (line) => notice.update(line));
     notice.done("success", `Cloned ${repo.name}`);
     await host.openRepo(repo.root);
   } catch (error) {

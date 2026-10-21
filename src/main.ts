@@ -30,11 +30,42 @@ function handleShortcut(event: KeyboardEvent, workspace: Workspace): void {
     repo.closeDiff();
     return;
   }
+  if (event.key === "Escape" && repo?.rebase.isOpen()) {
+    event.preventDefault();
+    repo.rebase.close();
+    return;
+  }
+  if (event.key === "Escape" && repo?.merge.isOpen()) {
+    event.preventDefault();
+    repo.merge.close();
+    return;
+  }
+  if (event.key === "Escape" && repo?.history.isOpen()) {
+    event.preventDefault();
+    repo.history.close();
+    return;
+  }
+
+  // s and u stage and unstage the picked files, as in GitKraken, unless typing.
+  if (repo && !event.metaKey && !event.ctrlKey && !event.altKey && (event.key === "s" || event.key === "u")) {
+    const target = event.target as Element | null;
+    if (!target?.closest?.("input, textarea, [contenteditable], .terminal-panel, .rebase-view")) {
+      event.preventDefault();
+      if (event.key === "s") repo.detail.stageKey();
+      else repo.detail.unstageKey();
+      return;
+    }
+  }
 
   const id = shortcutFor(event);
   if (!id) return;
+  // Off macOS, Ctrl+letter belongs to the shell while the terminal has focus.
+  if (!isMac && id !== "toggleTerminal" && (event.target as Element | null)?.closest?.(".terminal-panel")) return;
   // The composer commits on its own, with its own text.
   if (id === "commit" && (event.target as Element | null)?.closest?.(".composer")) return;
+  // In a text field, ⌘Z undoes typing (the Edit menu's Undo), not git.
+  const typing = (event.target as Element | null)?.closest?.("input, textarea, [contenteditable]");
+  if ((id === "undo" || id === "redo" || id === "redoAlt") && typing) return;
   event.preventDefault();
   event.stopPropagation();
   runCommand(id, workspace);
@@ -63,6 +94,14 @@ function runCommand(id: Command, workspace: Workspace): void {
       return workspace.cycle(-1);
     case "settings":
       return void workspace.openPreferences();
+    case "zoomIn":
+      return workspace.zoom(1);
+    case "zoomOut":
+      return workspace.zoom(-1);
+    case "zoomReset":
+      return workspace.zoom(0);
+    case "shortcuts":
+      return workspace.showShortcuts();
   }
   const repo = workspace.activeRepo();
   if (!repo) return;
@@ -101,6 +140,15 @@ function runCommand(id: Command, workspace: Workspace): void {
       return repo.refPanel.focusFilter();
     case "refresh":
       return void repo.refresh();
+    case "toggleTerminal":
+      return repo.terminal.toggle();
+    case "fileHistory":
+      return void workspace.openFileFinder(repo);
+    case "undo":
+      return void actions.undo();
+    case "redo":
+    case "redoAlt":
+      return void actions.redo();
   }
 }
 
@@ -108,6 +156,7 @@ async function start(): Promise<void> {
   const [data, info] = await Promise.all([api.loadAppData(), api.appInfo()]);
   document.body.classList.toggle("mac", info.platform === "macos");
   const workspace = new Workspace(data, info);
+  workspace.applyAppearance();
   listenForPrompts();
   void onRepoChanged((change) => workspace.repoChanged(change));
   window.addEventListener("keydown", (event) => handleShortcut(event, workspace), true);

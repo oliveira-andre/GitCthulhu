@@ -49,6 +49,12 @@ impl Error {
             Error::GitNotFound => "gitNotFound",
             Error::NotARepository(_) => "notARepository",
             Error::Git { stderr, .. } if is_auth_failure(stderr) => "authFailed",
+            Error::Git { stderr, .. }
+                if stderr.contains("tell me who you are")
+                    || stderr.contains("identity unknown") =>
+            {
+                "identityUnknown"
+            }
             Error::Git { .. } => "git",
             Error::Conflicts(_) => "conflicts",
             Error::Invalid(_) => "invalid",
