@@ -83,7 +83,7 @@ Keep logic in the lowest layer that can hold it.
 - `repo/actions.ts`: every operation with its dialogs, plus the ref, commit and multi-select context menus. `repo/extras-actions.ts` covers submodules, worktrees, LFS and Gitflow.
 - Views that replace the graph (`repoView.showCenter`): `diff-view.ts`, `rebase-view.ts`, `merge-view.ts`, `history-view.ts`. `terminal-panel.ts` docks xterm under the graph; `ref-drag.ts` is label drag and drop. `repo/toolbar.ts` and `repo/ref-panel.ts` are the remaining pieces.
 - `code/`: syntax highlighting with a hand-picked Prism build (`prism-manual.ts`, `syntax.ts`), word-level changes (`word-diff.ts`) and `render.ts`, which builds lines from tokens without `innerHTML`.
-- `appearance.ts`: theme (dark, light via `:root[data-theme="light"]`, or system) and zoom (the webview zoom, in fixed steps).
+- `appearance.ts`: theme (Dracula, dark or light via `:root[data-theme]`, or system) and zoom (the webview zoom, in fixed steps). The theme is also cached in localStorage so a launch paints in it before the app data loads; Settings stay the source of truth.
 - `platform.ts`: the shortcut table, which handlers, tooltips and the palette all read. `main.ts` handles shortcuts in a capture-phase listener; dialogs and the palette take precedence.
 - `dialogs.ts` (a promise-based `form()`, `confirmAction`, `promptText`, `refNameProblem`), `menu.ts`, `toast.ts`, `palette.ts` (fuzzy scoring), `askpass.ts` (a sequential prompt queue), `welcome.ts`.
 
@@ -110,12 +110,13 @@ The mock must ignore `blur` and `resize` listeners, because headless capture res
 
 ## Design
 
-The UI follows `DESIGN.md` (shared with Hostly):
-- violet-dark surfaces;
-- purple for actions and focus;
-- green = added, orange = modified, red = removed or danger, cyan = renamed or links, pink = conflicts, live activity and scrollbars, yellow = search matches;
-- the eight graph lane colors in `format.ts` `LANE_COLORS`, matching the core's `graph::COLORS`;
-- Inter and JetBrains Mono via `@fontsource`, lucide icons via `src/icons.ts`.
+Themes are token sets at the top of `src/styles.css`; components only read tokens (colors, radii, button and tab shapes, panel framing, the UI font), so a theme never needs selector overrides beyond Light's diff tints.
+- **Dracula** (`:root`, the default; `DESIGN.md`, shared with Hostly): violet-dark surfaces, purple for actions and focus, green = added, orange = modified, red = removed or danger, cyan = renamed or links, pink = conflicts, live activity and scrollbars, yellow = search matches. Inter.
+- **Light**: Dracula's shapes and meanings with darker, readable shades.
+- **Dark** (`data-theme="dark"`): Spotify-inspired, near-black and achromatic with green as the one accent, pill buttons with uppercase labels, and rounded panels on a black frame. Figtree stands in for Circular.
+- Match the system picks Dracula or Light. The store's `Theme` defaults to Dracula; data version 2 maps version 1's `dark` (which was Dracula) to `dracula`.
+- What script colors follows `appearance.ts` `currentTheme()`: the eight graph lane colors per theme in `format.ts` `LANE_COLORS` (matching the core's `graph::COLORS`) and the terminal palettes in `terminal-panel.ts`; the graph canvas reads the tokens. `RepoView.themeChanged()` repaints them.
+- Fonts via `@fontsource` (Inter, Figtree, JetBrains Mono), lucide icons via `src/icons.ts`.
 - The logo: the owner's `logo.png` at the root is the source. Its corners are opaque black, so the derived copies are cut along the tile (at about x 46, y 45, 1162 px square, radius 285) with transparent corners:
   - `assets/app-icon.png`: 1024 px, the tile at 824 px with a shadow, for `npx tauri icon`;
   - `assets/logo.png`: 512 px, for the README;

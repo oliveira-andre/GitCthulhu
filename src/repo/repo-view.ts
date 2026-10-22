@@ -151,6 +151,12 @@ export class RepoView {
     this.root.remove();
   }
 
+  /** Repaints what script colors from the theme: the graph's canvas and labels, and the terminal. */
+  themeChanged(): void {
+    this.graphView.invalidate();
+    this.terminal.applyTheme();
+  }
+
   settingsChanged(): void {
     this.applyPanelWidths();
     this.scheduleAutoFetch();

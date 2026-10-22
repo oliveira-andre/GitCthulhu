@@ -320,7 +320,7 @@ export interface Settings {
   ignoreWhitespace: boolean;
   /** Command that opens files, e.g. `code`; empty uses the system default. */
   editor: string;
-  theme: "dark" | "light" | "system";
+  theme: "dracula" | "dark" | "light" | "system";
   zoom: number;
 }
 

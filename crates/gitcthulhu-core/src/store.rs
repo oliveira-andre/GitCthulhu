@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const MAX_RECENT: usize = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -40,9 +40,12 @@ pub struct Settings {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum Theme {
+    /// The violet-dark palette with neon accents; the default.
+    Dracula,
+    /// Near-black and achromatic, with green accents.
     Dark,
     Light,
-    /// Follows the system's appearance.
+    /// Follows the system's appearance: Dracula or light.
     System,
 }
 
@@ -74,7 +77,7 @@ impl Default for Settings {
             diff_layout: DiffLayout::Unified,
             ignore_whitespace: false,
             editor: String::new(),
-            theme: Theme::Dark,
+            theme: Theme::Dracula,
             zoom: 1.0,
         }
     }
@@ -117,11 +120,17 @@ impl Default for AppData {
 impl AppData {
     /// Reads the file, or starts empty when it doesn't exist yet.
     pub fn load(path: &Path) -> Result<AppData> {
-        match std::fs::read(path) {
-            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AppData::default()),
-            Err(e) => Err(e.into()),
+        let mut data: AppData = match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(AppData::default()),
+            Err(e) => return Err(e.into()),
+        };
+        // Version 1's dark theme is the one now called Dracula.
+        if data.version < 2 && data.settings.theme == Theme::Dark {
+            data.settings.theme = Theme::Dracula;
         }
+        data.version = VERSION;
+        Ok(data)
     }
 
     /// Writes to a temporary file and renames it into place, so a crash
@@ -188,5 +197,13 @@ mod tests {
         let loaded = AppData::load(&path).unwrap();
         assert_eq!(loaded.settings.commit_limit, 50);
         assert_eq!(loaded.settings.diff_context, 3);
+
+        assert_eq!(loaded.settings.theme, Theme::Dracula);
+
+        // Version 1's "dark" was the look now called Dracula.
+        std::fs::write(&path, r#"{"version":1,"settings":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(AppData::load(&path).unwrap().settings.theme, Theme::Dracula);
+        std::fs::write(&path, r#"{"version":2,"settings":{"theme":"dark"}}"#).unwrap();
+        assert_eq!(AppData::load(&path).unwrap().settings.theme, Theme::Dark);
     }
 }

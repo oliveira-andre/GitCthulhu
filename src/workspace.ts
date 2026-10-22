@@ -54,11 +54,13 @@ export class Workspace implements Shell {
     for (const tab of this.tabs) if (tab.kind === "repo") tab.view.settingsChanged();
   }
 
-  /** Theme and zoom from Settings; repaints the graphs when the system theme flips. */
+  /** Theme and zoom from Settings; repaints the repositories now and when the system theme flips. */
   applyAppearance(): void {
-    applyTheme(this.data.settings.theme, () => {
-      for (const tab of this.tabs) if (tab.kind === "repo") tab.view.graphView.invalidate();
-    });
+    const repaint = () => {
+      for (const tab of this.tabs) if (tab.kind === "repo") tab.view.themeChanged();
+    };
+    applyTheme(this.data.settings.theme, repaint);
+    repaint();
     applyZoom(this.data.settings.zoom || 1);
   }
 
@@ -429,6 +431,7 @@ export class Workspace implements Shell {
           type: "select",
           value: s.theme,
           options: [
+            { value: "dracula", label: "Dracula" },
             { value: "dark", label: "Dark" },
             { value: "light", label: "Light" },
             { value: "system", label: "Match the system" },
@@ -460,7 +463,7 @@ export class Workspace implements Shell {
       autoFetchMinutes: Number(result.autoFetchMinutes),
       diffContext: Number(result.diffContext),
       dateFormat: result.dateFormat === "absolute" ? "absolute" : "relative",
-      theme: result.theme === "light" ? "light" : result.theme === "system" ? "system" : "dark",
+      theme: result.theme === "dark" || result.theme === "light" || result.theme === "system" ? result.theme : "dracula",
       editor: String(result.editor).trim(),
       showAvatars: Boolean(result.showAvatars),
     });

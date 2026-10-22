@@ -1,18 +1,20 @@
 // The embedded terminal, docked under the graph: the user's shell, started
 // in the repository. One per repository tab; it keeps running while hidden.
 import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
+import { type ITheme, Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { Channel } from "@tauri-apps/api/core";
 import { api, errorMessage } from "../api";
+import { currentTheme } from "../appearance";
 import { el } from "../dom";
 import { MONO_FONT, fontsReady } from "../fonts";
 import { icon, iconButton } from "../icons";
 import { shortcutLabel } from "../platform";
+import type { ThemeName } from "../format";
 import type { RepoView } from "./repo-view";
 
-// The design's neons, as in Hostly's terminals.
-const THEME = {
+// The design's neons, as in Hostly's terminals. The light theme keeps them.
+const DRACULA: ITheme = {
   background: "#1B1A23",
   foreground: "#F8F8F2",
   cursor: "#9580FF",
@@ -37,6 +39,38 @@ const THEME = {
   brightMagenta: "#FF99CC",
   brightCyan: "#99FFEE",
   brightWhite: "#F8F8F2",
+};
+
+const THEMES: Record<ThemeName, ITheme> = {
+  dracula: DRACULA,
+  // Dark's achromatic palette, with green as the cursor.
+  dark: {
+    background: "#121212",
+    foreground: "#FFFFFF",
+    cursor: "#1ED760",
+    cursorAccent: "#121212",
+    selectionBackground: "#3E3E3E",
+    scrollbarSliderBackground: "rgba(255, 255, 255, 0.3)",
+    scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.6)",
+    scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.75)",
+    black: "#282828",
+    red: "#F3727F",
+    green: "#1ED760",
+    yellow: "#FFD85E",
+    blue: "#539DF5",
+    magenta: "#F573A0",
+    cyan: "#A0C3D2",
+    white: "#CBCBCB",
+    brightBlack: "#7C7C7C",
+    brightRed: "#F799A2",
+    brightGreen: "#5CE38A",
+    brightYellow: "#FFE28A",
+    brightBlue: "#80B7F8",
+    brightMagenta: "#F899BB",
+    brightCyan: "#BDD6E0",
+    brightWhite: "#FFFFFF",
+  },
+  light: DRACULA,
 };
 
 const ENTER = 13;
@@ -70,6 +104,10 @@ export class TerminalPanel {
     this.root.style.height = `${this.height}px`;
   }
 
+  applyTheme(): void {
+    if (this.terminal) this.terminal.options.theme = THEMES[currentTheme()];
+  }
+
   isOpen(): boolean {
     return !this.root.hidden;
   }
@@ -97,7 +135,7 @@ export class TerminalPanel {
   private async start(): Promise<void> {
     if (!this.terminal) {
       await fontsReady;
-      const terminal = new Terminal({ fontFamily: MONO_FONT, fontSize: 12, cursorBlink: true, scrollback: 5000, theme: THEME });
+      const terminal = new Terminal({ fontFamily: MONO_FONT, fontSize: 12, cursorBlink: true, scrollback: 5000, theme: THEMES[currentTheme()] });
       terminal.loadAddon(this.fit);
       terminal.open(this.host);
       terminal.onData((data) => this.input(this.encoder.encode(data)));

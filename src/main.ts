@@ -1,10 +1,13 @@
 import "./fonts";
 import { listen } from "@tauri-apps/api/event";
 import { WORK_IN_PROGRESS, api, errorMessage, onRepoChanged } from "./api";
+import { applySavedTheme } from "./appearance";
 import { listenForPrompts } from "./askpass";
 import { el } from "./dom";
 import { type ShortcutId, isMac, shortcutFor } from "./platform";
 import { Workspace } from "./workspace";
+
+applySavedTheme();
 
 /** Commands run from shortcuts and from the macOS menu bar (src-tauri/src/menu.rs). */
 type Command = ShortcutId | "cloneRepo" | "initRepo";

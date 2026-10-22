@@ -227,7 +227,7 @@ Docker check. See [Next session: deploy](#next-session-deploy-like-hostly).
   submodules), and pick the destination folder inside the dialog. Start a new
   repository, or scan a folder for repositories (four levels deep, skipping
   `node_modules` and the like) to add them to the recent list.
-- **View**: zoom (⌘= / ⌘− / ⌘0), a dark, light or system theme (Preferences),
+- **View**: zoom (⌘= / ⌘− / ⌘0), a Dracula (the default), dark, light or system theme (Preferences),
   and a keyboard shortcut cheat sheet (⌘/).
 - **A File menu** on macOS: New Tab (⌘T), Open Repository… (⌘O), Clone
   Repository…, New Repository…, Reopen Closed Tab (⇧⌘T), Close Tab (⌘W).

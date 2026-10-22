@@ -693,8 +693,10 @@ export class GraphView {
     if (rows === 0) return;
 
     const styles = getComputedStyle(document.documentElement);
-    const background = styles.getPropertyValue("--deep-night").trim() || "#1b1a23";
+    const background = styles.getPropertyValue("--sunken").trim() || "#1b1a23";
     const foreground = styles.getPropertyValue("--fg").trim() || "#f8f8f2";
+    const onAvatar = styles.getPropertyValue("--on-bright").trim() || background;
+    const font = styles.getPropertyValue("--font-ui").trim() || "sans-serif";
     const x = (lane: number) => PAD + lane * LANE + LANE / 2;
     const y = (index: number) => index * ROW + ROW / 2 - top;
     // Lines first, so dots sit on top. Row i's edges come from row i - 1;
@@ -761,8 +763,8 @@ export class GraphView {
         ctx.fill();
         ctx.stroke();
         if (this.view.settings().showAvatars) {
-          ctx.fillStyle = background;
-          ctx.font = "700 9px Inter, sans-serif";
+          ctx.fillStyle = onAvatar;
+          ctx.font = `700 9px ${font}`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText(initials(commit.author), cx, cy + 0.5);

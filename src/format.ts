@@ -47,15 +47,22 @@ export function initials(name: string): string {
   return (first + last).toUpperCase();
 }
 
-/** Graph lane colors: the design's neons, in the order lanes take them. */
-export const LANE_COLORS = ["#9580FF", "#80FFEA", "#FF80BF", "#8AFF80", "#FFCA80", "#FFFF80", "#FF9580", "#B9AEFF"];
-/** The same hues, dark enough to read on the light theme. */
-const LIGHT_LANE_COLORS = ["#6a4fe0", "#0b847b", "#c2368a", "#1d8f35", "#a86400", "#857500", "#cf432c", "#7d6bd6"];
+export type ThemeName = "dracula" | "dark" | "light";
 
-let palette = LANE_COLORS;
+/** Graph lane colors per theme, in the order lanes take them. */
+export const LANE_COLORS: Record<ThemeName, string[]> = {
+  /** The design's neons. */
+  dracula: ["#9580FF", "#80FFEA", "#FF80BF", "#8AFF80", "#FFCA80", "#FFFF80", "#FF9580", "#B9AEFF"],
+  /** Dark's UI is achromatic, so the graph is where its color lives. */
+  dark: ["#1ED760", "#509BF5", "#F573A0", "#FFA42B", "#B49BC8", "#CDF564", "#F3727F", "#A0C3D2"],
+  /** Dracula's hues, dark enough to read on the light theme. */
+  light: ["#6a4fe0", "#0b847b", "#c2368a", "#1d8f35", "#a86400", "#857500", "#cf432c", "#7d6bd6"],
+};
 
-export function setLightPalette(light: boolean): void {
-  palette = light ? LIGHT_LANE_COLORS : LANE_COLORS;
+let palette = LANE_COLORS.dracula;
+
+export function setLanePalette(theme: ThemeName): void {
+  palette = LANE_COLORS[theme];
 }
 
 export function laneColor(index: number): string {

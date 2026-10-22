@@ -1,19 +1,46 @@
 // Theme and zoom, from Settings.
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Settings } from "./api";
-import { setLightPalette } from "./format";
+import { type ThemeName, setLanePalette } from "./format";
 
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-let following: Settings["theme"] = "dark";
+const THEME_KEY = "gitcthulhu.theme";
+let following: Settings["theme"] = "dracula";
+let current: ThemeName = "dracula";
 let onSystemChange: (() => void) | null = null;
 
-/** Sets the theme; `system` follows the OS appearance as it changes. */
+/** The theme in use, with `system` resolved. */
+export function currentTheme(): ThemeName {
+  return current;
+}
+
+/** Sets the theme; `system` follows the OS appearance (Dracula or light) as it changes. */
 export function applyTheme(theme: Settings["theme"], changed: () => void): void {
   following = theme;
-  const light = theme === "light" || (theme === "system" && !darkQuery.matches);
-  document.documentElement.dataset.theme = light ? "light" : "dark";
-  setLightPalette(light);
+  current = theme === "system" ? (darkQuery.matches ? "dracula" : "light") : theme;
+  document.documentElement.dataset.theme = current;
+  setLanePalette(current);
   onSystemChange = changed;
+  try {
+    localStorage.setItem(THEME_KEY, theme);
+  } catch {
+    // Settings still hold the theme; this copy only avoids a flash at launch.
+  }
+}
+
+/**
+ * Applies the theme last used, before the app data loads, so the window
+ * doesn't open in the default theme and then switch. Settings stay the source
+ * of truth and are applied right after.
+ */
+export function applySavedTheme(): void {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(THEME_KEY);
+  } catch {
+    return;
+  }
+  if (saved === "dracula" || saved === "dark" || saved === "light" || saved === "system") applyTheme(saved, () => undefined);
 }
 
 darkQuery.addEventListener("change", () => {
