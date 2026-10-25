@@ -17,6 +17,7 @@ import {
 import { el } from "../dom";
 import { notify, toast } from "../toast";
 import { Actions } from "./actions";
+import { CodeView } from "./code-view";
 import { DetailPanel } from "./detail-panel";
 import { DiffView } from "./diff-view";
 import { ExtrasActions } from "./extras-actions";
@@ -38,6 +39,8 @@ export interface Shell {
   newTab(): void;
   openPalette(): void;
   openPreferences(): void;
+  /** The global name and email changed: the title bar and every composer show it. */
+  identityChanged(): void;
 }
 
 export interface DiffRequest {
@@ -70,6 +73,7 @@ export class RepoView {
   readonly rebase: RebaseView;
   readonly merge: MergeView;
   readonly history: HistoryView;
+  readonly code: CodeView;
   readonly terminal: TerminalPanel;
   /** Commits in HEAD's history, among those loaded. */
   headAncestors = new Set<string>();
@@ -105,10 +109,11 @@ export class RepoView {
     this.rebase = new RebaseView(this);
     this.merge = new MergeView(this);
     this.history = new HistoryView(this);
+    this.code = new CodeView(this);
     this.terminal = new TerminalPanel(this);
     this.detail = new DetailPanel(this);
 
-    const center = el("main", "center", this.graphView.root, this.diff.root, this.rebase.root, this.merge.root, this.history.root, this.terminal.root);
+    const center = el("main", "center", this.graphView.root, this.diff.root, this.rebase.root, this.merge.root, this.history.root, this.code.root, this.terminal.root);
     const left = el("div", "resizer", "");
     const right = el("div", "resizer", "");
     const body = el("div", "repo-body", this.refPanel.root, left, center, right, this.detail.root);
@@ -227,12 +232,16 @@ export class RepoView {
     return true;
   }
 
-  openDiff(request: DiffRequest): void {
+  /**
+   * `scroll` puts the diff back where it was, after "go to" and Back.
+   * `focus: false` keeps the keyboard in the file list it was opened from.
+   */
+  openDiff(request: DiffRequest, scroll?: number, focus = true): void {
     if (request.file.kind === "conflicted") {
       void this.merge.open(request.file.path);
       return;
     }
-    void this.diff.open(request);
+    void this.diff.open(request, scroll, focus);
     this.detail.markOpenFile(request);
   }
 
@@ -241,8 +250,8 @@ export class RepoView {
     this.detail.markOpenFile(null);
   }
 
-  /** The middle of the view shows one of the graph, a diff, a rebase plan or the merge tool. */
-  showCenter(which: "graph" | "diff" | "rebase" | "merge" | "history"): void {
+  /** The middle of the view shows one of the graph, a diff, a rebase plan, the merge tool, a file's history or "go to" results. */
+  showCenter(which: "graph" | "diff" | "rebase" | "merge" | "history" | "code"): void {
     if (which !== "diff" && this.diff.isOpen()) {
       this.diff.reset();
       this.detail.markOpenFile(null);
@@ -252,6 +261,7 @@ export class RepoView {
     this.rebase.root.hidden = which !== "rebase";
     this.merge.root.hidden = which !== "merge";
     this.history.root.hidden = which !== "history";
+    this.code.root.hidden = which !== "code";
     if (which === "graph") this.graphView.focus();
   }
 

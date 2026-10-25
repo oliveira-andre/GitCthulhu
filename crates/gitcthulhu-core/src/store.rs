@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_RECENT: usize = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -52,6 +52,10 @@ pub enum Theme {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DiffLayout {
+    /// One row per line: a changed line shows once, with its removed and
+    /// added words inline. The default.
+    Compact,
+    /// Removed and added lines on rows of their own ("Detailed").
     Unified,
     /// Old and new side by side.
     Split,
@@ -74,7 +78,7 @@ impl Default for Settings {
             show_avatars: true,
             left_panel_width: 260,
             right_panel_width: 380,
-            diff_layout: DiffLayout::Unified,
+            diff_layout: DiffLayout::Compact,
             ignore_whitespace: false,
             editor: String::new(),
             theme: Theme::Dracula,
@@ -128,6 +132,10 @@ impl AppData {
         // Version 1's dark theme is the one now called Dracula.
         if data.version < 2 && data.settings.theme == Theme::Dark {
             data.settings.theme = Theme::Dracula;
+        }
+        // Before version 3, unified was the default and compact didn't exist.
+        if data.version < 3 && data.settings.diff_layout == DiffLayout::Unified {
+            data.settings.diff_layout = DiffLayout::Compact;
         }
         data.version = VERSION;
         Ok(data)
@@ -205,5 +213,22 @@ mod tests {
         assert_eq!(AppData::load(&path).unwrap().settings.theme, Theme::Dracula);
         std::fs::write(&path, r#"{"version":2,"settings":{"theme":"dark"}}"#).unwrap();
         assert_eq!(AppData::load(&path).unwrap().settings.theme, Theme::Dark);
+
+        // Unified was the default before compact; split was a choice.
+        std::fs::write(
+            &path,
+            r#"{"version":2,"settings":{"diffLayout":"unified"}}"#,
+        )
+        .unwrap();
+        let layout = |path: &Path| AppData::load(path).unwrap().settings.diff_layout;
+        assert_eq!(layout(&path), DiffLayout::Compact);
+        std::fs::write(&path, r#"{"version":2,"settings":{"diffLayout":"split"}}"#).unwrap();
+        assert_eq!(layout(&path), DiffLayout::Split);
+        std::fs::write(
+            &path,
+            r#"{"version":3,"settings":{"diffLayout":"unified"}}"#,
+        )
+        .unwrap();
+        assert_eq!(layout(&path), DiffLayout::Unified);
     }
 }

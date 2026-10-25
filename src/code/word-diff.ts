@@ -9,6 +9,57 @@ const MAX_TOKENS = 400;
 
 /** Character ranges that changed in `a` and in `b`, or null when the lines differ too much to be worth it. */
 export function wordRanges(a: string, b: string): { a: Range[]; b: Range[] } | null {
+  const aligned = align(a, b);
+  if (!aligned) return null;
+  return { a: ranges(aligned.ta, aligned.keepA), b: ranges(aligned.tb, aligned.keepB) };
+}
+
+export interface Piece {
+  text: string;
+  kind: "same" | "removed" | "added";
+}
+
+/**
+ * The new line with the removed words put back where they were, for showing
+ * a changed line once. Null when the lines differ too much: they read better
+ * as a removed line and an added one.
+ */
+export function mergeWords(a: string, b: string): Piece[] | null {
+  const aligned = align(a, b);
+  if (!aligned) return null;
+  const { ta, tb, keepA, keepB } = aligned;
+  const pieces: Piece[] = [];
+  const push = (text: string, kind: Piece["kind"]) => {
+    const last = pieces[pieces.length - 1];
+    if (last?.kind === kind) last.text += text;
+    else pieces.push({ text, kind });
+  };
+  // Kept tokens pair up in order, so walk both lines and emit the unpaired ones as they come.
+  for (let i = 0, j = 0; i < ta.length || j < tb.length; ) {
+    if (i < ta.length && !keepA[i]) push(ta[i++], "removed");
+    else if (j < tb.length && !keepB[j]) push(tb[j++], "added");
+    else {
+      push(tb[j], "same");
+      i++;
+      j++;
+    }
+  }
+  // As with word ranges, changes that only touch whitespace aren't marked:
+  // the new spacing shows plainly and the old one is dropped.
+  const out: Piece[] = [];
+  for (const piece of pieces) {
+    const blank = !piece.text.trim();
+    if (blank && piece.kind === "removed") continue;
+    const kind = blank ? "same" : piece.kind;
+    const last = out[out.length - 1];
+    if (last?.kind === kind) last.text += piece.text;
+    else out.push({ text: piece.text, kind });
+  }
+  return out;
+}
+
+/** Tokens of both lines and which of them the longest common subsequence keeps; null when there's too little in common. */
+function align(a: string, b: string): { ta: string[]; tb: string[]; keepA: boolean[]; keepB: boolean[] } | null {
   const ta = a.match(TOKEN) ?? [];
   const tb = b.match(TOKEN) ?? [];
   if (ta.length > MAX_TOKENS || tb.length > MAX_TOKENS || !ta.length || !tb.length) return null;
@@ -34,7 +85,7 @@ export function wordRanges(a: string, b: string): { a: Range[]; b: Range[] } | n
   // Mostly different lines read better highlighted whole.
   const shared = ta.filter((_, i) => keepA[i]).join("").trim().length;
   if (shared < Math.min(a.trim().length, b.trim().length) * 0.4) return null;
-  return { a: ranges(ta, keepA), b: ranges(tb, keepB) };
+  return { ta, tb, keepA, keepB };
 }
 
 function ranges(tokens: string[], keep: boolean[]): Range[] {

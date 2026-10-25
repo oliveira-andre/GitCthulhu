@@ -338,6 +338,19 @@ pub fn blob(repo: &Repo, source: &BlobSource, path: &str, max: usize) -> Result<
     Ok(Some(bytes))
 }
 
+/// A text file's contents, or `None` when it doesn't exist there. Refuses
+/// binary files and files larger than `max` bytes.
+pub fn text(repo: &Repo, source: &BlobSource, path: &str, max: usize) -> Result<Option<String>> {
+    let Some(bytes) = blob(repo, source, path, max)? else {
+        return Ok(None);
+    };
+    // git's own test: a NUL early on means binary.
+    if bytes[..bytes.len().min(8000)].contains(&0) {
+        return Err(Error::Invalid(format!("{path} is a binary file")));
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

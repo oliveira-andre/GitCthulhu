@@ -209,6 +209,22 @@ export type DiffTarget =
 export type BlobSource = { kind: "worktree" } | { kind: "index" } | { kind: "revision"; rev: string };
 
 export type LineAction = "stage" | "unstage" | "discard";
+
+export type SymbolSearch = "definitions" | "references";
+
+export interface SymbolMatch {
+  path: string;
+  /** 1-based. */
+  line: number;
+  text: string;
+  /** The line looks like it declares the symbol. */
+  definition: boolean;
+}
+
+export interface SymbolResults {
+  matches: SymbolMatch[];
+  truncated: boolean;
+}
 export interface Submodule {
   path: string;
   name: string;
@@ -316,12 +332,19 @@ export interface Settings {
   showAvatars: boolean;
   leftPanelWidth: number;
   rightPanelWidth: number;
-  diffLayout: "unified" | "split";
+  /** Compact shows a changed line once, with its words changed inline; unified ("Detailed") shows removed and added lines apart. */
+  diffLayout: "compact" | "unified" | "split";
   ignoreWhitespace: boolean;
   /** Command that opens files, e.g. `code`; empty uses the system default. */
   editor: string;
   theme: "dracula" | "dark" | "light" | "system";
   zoom: number;
+}
+
+/** git's global name and email: who is using the app. */
+export interface Profile {
+  name: string | null;
+  email: string | null;
 }
 
 export interface RecentRepo {
@@ -390,6 +413,12 @@ export const api = {
   /** Repositories in and up to four folders below `root`. */
   findRepositories: (root: string) => invoke<string[]>("find_repositories", { root }),
   answerPrompt: (id: number, answer: string | null) => invoke<void>("answer_prompt", { id, answer }),
+  profile: () => invoke<Profile>("profile"),
+  setProfile: (name: string, email: string) => invoke<Profile>("set_profile", { name, email }),
+  /** The HTTPS hosts the open repositories' remotes sign in to, as `https://host`. */
+  remoteHosts: () => invoke<string[]>("remote_hosts"),
+  /** Forgets the global name and email (`identity`) and the passwords saved for `hosts`. */
+  signOut: (identity: boolean, hosts: string[]) => invoke<void>("sign_out", { identity, hosts }),
 
   openRepo: (path: string) => invoke<RepoInfo>("open_repo", { path }),
   initRepo: (path: string, branch: string | null) => invoke<RepoInfo>("init_repo", { path, branch }),
@@ -412,6 +441,11 @@ export const api = {
   fileImage: (id: string, source: BlobSource, path: string) => invoke<string | null>("file_image", { id, source, path }),
   headMessage: (id: string) => invoke<string>("head_message", { id }),
   worktreeFile: (id: string, path: string) => invoke<string>("worktree_file", { id, path }),
+  /** null when the file doesn't exist there. */
+  fileText: (id: string, source: BlobSource, path: string) => invoke<string | null>("file_text", { id, source, path }),
+  /** Whole-word matches of `symbol`; definitions are the ones that look like declarations. */
+  findSymbol: (id: string, source: BlobSource, symbol: string, search: SymbolSearch) =>
+    invoke<SymbolResults>("find_symbol", { id, source, symbol, search }),
 
   stage: (id: string, paths: string[]) => invoke<void>("stage", { id, paths }),
   unstage: (id: string, paths: string[]) => invoke<void>("unstage", { id, paths }),

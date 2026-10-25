@@ -3,6 +3,18 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { Settings } from "./api";
 import { type ThemeName, setLanePalette } from "./format";
 
+/** Every theme choice, in menu order. A new theme goes here, in styles.css and in format.ts's LANE_COLORS. */
+export const THEMES: { value: Settings["theme"]; label: string }[] = [
+  { value: "dracula", label: "Dracula" },
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Light" },
+  { value: "system", label: "Match the system" },
+];
+
+export function isTheme(value: unknown): value is Settings["theme"] {
+  return THEMES.some((t) => t.value === value);
+}
+
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
 const THEME_KEY = "gitcthulhu.theme";
 let following: Settings["theme"] = "dracula";
@@ -40,7 +52,7 @@ export function applySavedTheme(): void {
   } catch {
     return;
   }
-  if (saved === "dracula" || saved === "dark" || saved === "light" || saved === "system") applyTheme(saved, () => undefined);
+  if (isTheme(saved)) applyTheme(saved, () => undefined);
 }
 
 darkQuery.addEventListener("change", () => {

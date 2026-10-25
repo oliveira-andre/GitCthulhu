@@ -16,12 +16,14 @@ use gitcthulhu_core::ops::{
     self, CommitOptions, ConflictSide, Identity, LineAction, LineSelection, MergeMode, PullMode,
     PushOptions, ResetMode, Sequence,
 };
+use gitcthulhu_core::profile::{self, Profile};
 use gitcthulhu_core::rebase::{self, PlanCommit, RebaseStep};
 use gitcthulhu_core::refs::{self, Ref};
 use gitcthulhu_core::repo::{Head, RepoState};
 use gitcthulhu_core::status::{self, WorkingStatus};
 use gitcthulhu_core::store::{AppData, Settings};
 use gitcthulhu_core::submodules::{self, Submodule};
+use gitcthulhu_core::symbols::{self, SymbolResults, SymbolSearch};
 use gitcthulhu_core::terminal::{self, Terminal};
 use gitcthulhu_core::undo::{self, Available, Change, Entry, TipMove};
 use gitcthulhu_core::worktrees::{self, Worktree};
@@ -248,6 +250,53 @@ pub fn set_favorite(
 #[tauri::command]
 pub fn forget_recent(state: State<'_, AppState>, path: PathBuf) -> CmdResult<AppData> {
     update_data(&state, |data| data.recent.retain(|r| r.path != path))
+}
+
+// The person using the app
+
+#[tauri::command]
+pub async fn profile(state: State<'_, AppState>) -> CmdResult<Profile> {
+    let git = git(&state)?;
+    blocking(move || profile::load(&git)).await
+}
+
+#[tauri::command]
+pub async fn set_profile(
+    state: State<'_, AppState>,
+    name: String,
+    email: String,
+) -> CmdResult<Profile> {
+    let git = git(&state)?;
+    blocking(move || profile::save(&git, &name, &email)).await
+}
+
+/// The HTTPS hosts the open repositories' remotes sign in to.
+#[tauri::command]
+pub async fn remote_hosts(state: State<'_, AppState>) -> CmdResult<Vec<String>> {
+    let repos: Vec<Repo> = {
+        let open = state.repos.lock().unwrap();
+        open.values().map(|r| r.handle.repo.clone()).collect()
+    };
+    blocking(move || {
+        let mut hosts = Vec::new();
+        for repo in &repos {
+            hosts.extend(profile::remote_hosts(repo)?);
+        }
+        hosts.sort();
+        hosts.dedup();
+        Ok(hosts)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn sign_out(
+    state: State<'_, AppState>,
+    identity: bool,
+    hosts: Vec<String>,
+) -> CmdResult<()> {
+    let git = git(&state)?;
+    blocking(move || profile::sign_out(&git, identity, &hosts)).await
 }
 
 #[tauri::command]
@@ -559,6 +608,36 @@ pub async fn head_message(state: State<'_, AppState>, id: String) -> CmdResult<S
 }
 
 /// A working-tree file's text, for showing conflict markers.
+/// A text file from the working tree, the index or a commit; `None` when
+/// it doesn't exist there.
+#[tauri::command]
+pub async fn file_text(
+    state: State<'_, AppState>,
+    id: String,
+    source: BlobSource,
+    path: String,
+) -> CmdResult<Option<String>> {
+    const MAX: usize = 4 * 1024 * 1024;
+    read(&state, &id, move |repo| {
+        inspect::text(repo, &source, &path, MAX)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn find_symbol(
+    state: State<'_, AppState>,
+    id: String,
+    source: BlobSource,
+    symbol: String,
+    search: SymbolSearch,
+) -> CmdResult<SymbolResults> {
+    read(&state, &id, move |repo| {
+        symbols::find(repo, &source, &symbol, search)
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn worktree_file(
     state: State<'_, AppState>,

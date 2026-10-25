@@ -140,7 +140,7 @@ export class HistoryView {
       if (this.tab === "diff") {
         const diff = await api.fileDiff(this.view.id, { kind: "commit", oid: commit.oid }, commit.path, commit.oldPath ?? null, this.view.settings().diffContext);
         if (token !== this.token) return;
-        this.content.replaceChildren(top, el("div", "diff-body history-diff", ...renderDiff(diff)));
+        this.content.replaceChildren(top, el("div", "diff-body history-diff", ...renderDiff(diff, this.view.settings().diffLayout === "compact")));
       } else if (commit.kind === "deleted") {
         this.content.replaceChildren(top, el("div", "diff-notice", "The file was deleted in this commit, so there's nothing to blame."));
       } else {

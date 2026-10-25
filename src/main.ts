@@ -4,6 +4,7 @@ import { WORK_IN_PROGRESS, api, errorMessage, onRepoChanged } from "./api";
 import { applySavedTheme } from "./appearance";
 import { listenForPrompts } from "./askpass";
 import { el } from "./dom";
+import { closeMenu } from "./menu";
 import { type ShortcutId, isMac, shortcutFor } from "./platform";
 import { Workspace } from "./workspace";
 
@@ -28,9 +29,20 @@ function handleShortcut(event: KeyboardEvent, workspace: Workspace): void {
     workspace.selectTab(Number(event.code.slice(5)));
     return;
   }
+  // A menu takes Escape first.
+  if (event.key === "Escape" && document.querySelector(".menu")) {
+    event.preventDefault();
+    closeMenu();
+    return;
+  }
   if (event.key === "Escape" && repo?.diff.isOpen()) {
     event.preventDefault();
-    repo.closeDiff();
+    repo.diff.escape();
+    return;
+  }
+  if (event.key === "Escape" && repo?.code.isOpen()) {
+    event.preventDefault();
+    repo.code.close();
     return;
   }
   if (event.key === "Escape" && repo?.rebase.isOpen()) {

@@ -144,6 +144,15 @@
 :root[data-theme="light"] .line.removed .word-change {
   background: rgba(207, 67, 44, 0.25);
 }
+:root[data-theme="light"] .line.modified {
+  background: rgba(168, 100, 0, 0.08);
+}
+:root[data-theme="light"] .line.modified .word-change {
+  background: rgba(29, 143, 53, 0.25);
+}
+:root[data-theme="light"] .line .word-removed {
+  background: rgba(207, 67, 44, 0.2);
+}
 
 /* Dark, Spotify-inspired: near-black achromatic surfaces where green is the
    one accent (actions, active states), pill buttons with uppercase labels,
@@ -560,6 +569,51 @@ body.mac .titlebar {
 .titlebar-fill {
   flex: 1;
   align-self: stretch;
+}
+/* The theme picker and the person using the app, at the right of the tabs. */
+.titlebar-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.titlebar-button {
+  width: 28px;
+  height: 28px;
+}
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 8px 0 3px;
+  border: none;
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--fg);
+  font-weight: 600;
+}
+.user-chip:hover,
+.user-chip:focus-visible {
+  background: var(--tab-hover-bg);
+}
+.user-chip.signed-out {
+  padding-left: 8px;
+  color: var(--muted);
+}
+.user-chip.signed-out:hover {
+  color: var(--fg);
+}
+.user-chip > .icon {
+  flex: none;
+  color: var(--muted);
+}
+.user-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-bodies {
@@ -1329,6 +1383,7 @@ body.mac .titlebar {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  outline: none;
 }
 .detail-empty {
   padding: 24px;
@@ -1608,28 +1663,35 @@ body.mac .titlebar {
   font-family: var(--font-ui);
   text-align: center;
 }
-.hunk {
+/* A file's hunks share one card. They stay apart inside it: the band above
+   each hunk counts the unchanged lines skipped and holds its Stage and
+   Discard buttons on the right. */
+.hunks {
   margin: 0 10px 14px;
   border: 1px solid var(--edge);
   border-radius: var(--radius-sm);
   overflow: hidden;
 }
-.hunk-header {
-  position: sticky;
-  top: -10px;
-  z-index: 1;
+.hunk-gap {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-height: 32px;
-  padding: 4px 8px 4px 12px;
-  background: var(--surface);
+  padding: 3px 8px 3px 12px;
+  border-block: 1px solid var(--edge);
+  background: var(--sunken);
   color: var(--muted);
   font-family: var(--font-ui);
-}
-.hunk-range {
-  color: var(--icon);
   font-size: 11px;
+}
+.hunk-gap:first-child {
+  border-top: none;
+}
+.hunk-gap > .icon {
+  flex: none;
+}
+.hunk-skipped {
+  flex: none;
 }
 .hunk-context {
   flex: 1;
@@ -1642,6 +1704,8 @@ body.mac .titlebar {
 .hunk-actions {
   display: flex;
   gap: 6px;
+  margin-left: auto;
+  flex: none;
 }
 .hunk-lines {
   min-width: max-content;
@@ -1734,6 +1798,7 @@ body.mac .titlebar {
 .menu {
   position: fixed;
   z-index: 100;
+  outline: none;
   min-width: 220px;
   max-width: 380px;
   padding: 5px;
@@ -1798,6 +1863,35 @@ body.mac .titlebar {
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
+}
+.menu-heading.with-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 300px;
+  padding: 6px 8px 6px;
+}
+.menu-heading.with-detail .menu-heading-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: 13px;
+}
+.menu-heading-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 400;
+}
+/* An item whose submenu is open stays highlighted. */
+.menu-item.has-submenu.open {
+  background: var(--pick-bg);
+  color: var(--pick-fg);
+}
+.menu-item.has-submenu.open .icon {
+  color: inherit;
 }
 
 /* Notices */
@@ -2776,6 +2870,260 @@ body.dragging * {
 }
 .line.added .word-change {
   background: color-mix(in srgb, var(--green) 26%, transparent);
+}
+
+/* Compact: a changed line shows once, its removed words struck through. */
+.line.modified {
+  background: color-mix(in srgb, var(--orange) 7%, transparent);
+}
+.line.modified .sign {
+  color: var(--orange);
+}
+.line.modified .word-change {
+  background: color-mix(in srgb, var(--green) 26%, transparent);
+}
+.line .word-removed {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--red) 28%, transparent);
+  text-decoration: line-through;
+  text-decoration-color: var(--red);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* A changed line's gutter: hovering shows the button that stages just it. */
+.line-gutter {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 24px;
+  flex: none;
+  padding-top: 1px; /* centers the button on the first line when the row wraps */
+}
+.line-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 17px;
+  padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--fg);
+  opacity: 0;
+}
+.line:hover .line-action,
+.line-action:focus-visible {
+  opacity: 1;
+}
+.line.added .line-action:hover {
+  border-color: var(--green);
+  background: var(--green);
+  color: var(--on-bright);
+}
+.line.removed .line-action:hover {
+  border-color: var(--red);
+  background: var(--red);
+  color: var(--on-accent);
+}
+.line.modified .line-action:hover {
+  border-color: var(--orange);
+  background: var(--orange);
+  color: var(--on-bright);
+}
+
+/* Peek: definitions or references inline, under the line they were asked from. */
+.peek {
+  position: sticky;
+  left: 0;
+  margin: 2px 0 4px;
+  border-top: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  background: var(--sunken);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  outline: none;
+}
+.diff-body > .peek {
+  margin: 0 10px 14px;
+}
+.peek-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+}
+.peek-header > .icon {
+  flex: none;
+  color: var(--icon);
+}
+.peek-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.symbol-name {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--raised);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.peek-body {
+  display: grid;
+  grid-template-columns: 1fr minmax(220px, 34%);
+  height: 260px;
+}
+.peek.empty .peek-body {
+  grid-template-columns: 1fr;
+  height: auto;
+}
+.peek.empty .diff-notice {
+  padding: 16px;
+}
+.peek-preview {
+  position: relative;
+  overflow: auto;
+  background: var(--base);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.peek-path {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  padding: 4px 10px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+.peek-list,
+.code-list {
+  overflow-y: auto;
+  background: var(--sunken);
+}
+.peek-list {
+  border-left: 1px solid var(--line);
+}
+.peek-file,
+.code-file {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px 10px 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.peek-file .file-name,
+.code-file .file-name {
+  font-weight: 700;
+}
+.peek-file .file-dir {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 11px;
+}
+.code-file .icon {
+  flex: none;
+  align-self: center;
+  color: var(--icon);
+}
+.peek-row,
+.code-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 10px 2px 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.code-row {
+  padding: 4px 10px 4px 18px;
+}
+.peek-row:hover,
+.code-row:hover {
+  background: var(--base);
+}
+.peek-row.selected,
+.code-row.selected {
+  background: var(--surface);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.peek-line {
+  min-width: 30px;
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: right;
+}
+.peek-row.definition .peek-line,
+.code-row.definition .peek-line {
+  color: var(--accent);
+  font-weight: 700;
+}
+.match-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.symbol-hit {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--yellow) 30%, transparent);
+  color: inherit;
+}
+.peek-more {
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.file-lines {
+  min-width: max-content;
+  padding-bottom: 8px;
+}
+.file-lines .line.target {
+  background: color-mix(in srgb, var(--yellow) 10%, transparent);
+  box-shadow: inset 3px 0 0 var(--yellow);
+}
+.file-lines .line.target .ln {
+  color: var(--fg);
+  opacity: 1;
+}
+
+/* Go to: the matches on the left, the file on the right. */
+.code-view.single .history-body {
+  grid-template-columns: 1fr;
+}
+.code-view.single .code-list {
+  display: none;
+}
+.code-list {
+  border-right: 1px solid var(--line);
+  outline: none;
+}
+.code-content {
+  position: relative;
+  padding-top: 0;
+}
+.code-content > .history-commit {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  justify-content: space-between;
+  background: var(--base);
+  font-family: var(--font-ui);
 }
 .image-compare {
   display: grid;

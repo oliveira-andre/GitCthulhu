@@ -1,26 +1,28 @@
 // Tabs: each is a repository or a new-tab page. The workspace is also the
 // Shell repository views use for settings, the palette and preferences.
+import { AccountControls, type AccountHost } from "./account";
 import { type AppData, type AppInfo, type RepoChanged, type Settings, api, errorMessage } from "./api";
 import { form } from "./dialogs";
 import { el } from "./dom";
 import { icon } from "./icons";
 import { type PaletteItem, openPalette } from "./palette";
-import { applyTheme, applyZoom, stepZoom } from "./appearance";
+import { THEMES, applyTheme, applyZoom, isTheme, stepZoom } from "./appearance";
 import { infoDialog } from "./dialogs";
-import { SHORTCUTS, type ShortcutId, isMac, shortcutLabel } from "./platform";
+import { SHORTCUTS, type ShortcutId, comboLabel, isMac, shortcutLabel } from "./platform";
 import { RepoView, type Shell } from "./repo/repo-view";
 import { notify } from "./toast";
 import { type RepoOpener, WelcomeView, browseForRepo, cloneRepoFlow, initRepoFlow } from "./welcome";
 
 type Tab = { key: number; kind: "welcome"; view: WelcomeView } | { key: number; kind: "repo"; view: RepoView };
 
-export class Workspace implements Shell {
+export class Workspace implements Shell, AccountHost {
   private tabs: Tab[] = [];
   private active: Tab | null = null;
   private closed: string[] = [];
   private nextKey = 1;
   private readonly tabStrip: HTMLElement;
   private readonly bodies: HTMLElement;
+  private readonly account: AccountControls;
 
   constructor(
     private data: AppData,
@@ -29,6 +31,14 @@ export class Workspace implements Shell {
     this.tabStrip = document.querySelector<HTMLElement>("#tabs")!;
     this.bodies = document.querySelector<HTMLElement>("#tab-bodies")!;
     document.querySelector("#new-tab")!.addEventListener("click", () => this.newTab());
+    this.account = new AccountControls(this);
+    document.querySelector(".titlebar")!.append(this.account.root);
+    void this.account.load();
+  }
+
+  identityChanged(): void {
+    void this.account.load();
+    for (const tab of this.tabs) if (tab.kind === "repo") tab.view.detail.identityChanged();
   }
 
   async restore(): Promise<void> {
@@ -59,8 +69,12 @@ export class Workspace implements Shell {
     const repaint = () => {
       for (const tab of this.tabs) if (tab.kind === "repo") tab.view.themeChanged();
     };
-    applyTheme(this.data.settings.theme, repaint);
+    applyTheme(this.data.settings.theme, () => {
+      repaint();
+      this.account.themeChanged();
+    });
     repaint();
+    this.account.themeChanged();
     applyZoom(this.data.settings.zoom || 1);
   }
 
@@ -81,10 +95,13 @@ export class Workspace implements Shell {
     const extras: [string, string][] = [
       ["Next / previous commit", "↓ ↑  or  J K"],
       ["Stage / unstage the selected files", "S  U"],
+      ["Next / previous file in the changes list, after opening one there", "↓ ↑"],
       ["Select several commits or files", `${isMac ? "⌘" : "Ctrl"}-click, ⇧-click`],
       ["Interactive rebase: pick, reword, squash, fixup, drop", "P R S F D"],
       ["Interactive rebase: move a commit", "⌥↑  ⌥↓"],
       ["Merge tool: save and mark resolved", isMac ? "⌘S" : "Ctrl+S"],
+      ["Diff: go to the definition / references of the clicked name", `${comboLabel("f12")}  ${comboLabel("shift+f12")}`],
+      ["Diff: peek the definition / references", `${comboLabel("alt+f12")}  ${comboLabel("alt+shift+f12")}`],
       ["Close a diff, panel or dialog", "Esc"],
       ["Switch to tab 1–9", isMac ? "⌘1 … ⌘9" : "Ctrl+1 … Ctrl+9"],
     ];
@@ -344,6 +361,10 @@ export class Workspace implements Shell {
     command("zoomIn", "Zoom in", "plus", () => this.zoom(1), "App");
     command("zoomOut", "Zoom out", "minus", () => this.zoom(-1), "App");
     command("zoomReset", "Actual size", "search", () => this.zoom(0), "App");
+    for (const theme of THEMES) {
+      const current = this.data.settings.theme === theme.value;
+      command(null, `Theme: ${theme.label}${current ? " (current)" : ""}`, "theme", () => void this.saveSettings({ ...this.data.settings, theme: theme.value }), "App");
+    }
     for (const recent of this.data.recent) {
       items.push({ label: recent.name, detail: recent.path, icon: "repo", group: "Open recent", action: () => void this.openRepo(recent.path) });
     }
@@ -430,12 +451,7 @@ export class Workspace implements Shell {
           label: "Theme",
           type: "select",
           value: s.theme,
-          options: [
-            { value: "dracula", label: "Dracula" },
-            { value: "dark", label: "Dark" },
-            { value: "light", label: "Light" },
-            { value: "system", label: "Match the system" },
-          ],
+          options: THEMES,
         },
         { name: "editor", label: "Editor command", type: "text", value: s.editor, placeholder: "The system's default app", mono: true, hint: "Opens files and the repository, for example code, cursor, zed or subl." },
         {
@@ -463,7 +479,7 @@ export class Workspace implements Shell {
       autoFetchMinutes: Number(result.autoFetchMinutes),
       diffContext: Number(result.diffContext),
       dateFormat: result.dateFormat === "absolute" ? "absolute" : "relative",
-      theme: result.theme === "dark" || result.theme === "light" || result.theme === "system" ? result.theme : "dracula",
+      theme: isTheme(result.theme) ? result.theme : "dracula",
       editor: String(result.editor).trim(),
       showAvatars: Boolean(result.showAvatars),
     });

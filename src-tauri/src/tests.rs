@@ -431,6 +431,67 @@ fn file_history_and_blame_through_ipc() {
 }
 
 #[test]
+fn symbols_and_file_text_through_ipc() {
+    let h = harness();
+    let repo = h.dir.path().join("repo");
+    let info: Value = h.ok("init_repo", json!({ "path": repo, "branch": "main" }));
+    let id = info["id"].as_str().unwrap().to_owned();
+    std::fs::write(repo.join("lib.rs"), "pub fn answer() -> u32 {\n    42\n}\n").unwrap();
+    std::fs::write(repo.join("main.rs"), "fn main() {\n    answer();\n}\n").unwrap();
+    let worktree = json!({ "kind": "worktree" });
+    let found: Value = h.ok(
+        "find_symbol",
+        json!({ "id": id, "source": worktree, "symbol": "answer", "search": "definitions" }),
+    );
+    assert_eq!(found["matches"][0]["path"], "lib.rs");
+    assert_eq!(found["matches"][0]["line"], 1);
+    assert_eq!(found["truncated"], false);
+    let found: Value = h.ok(
+        "find_symbol",
+        json!({ "id": id, "source": worktree, "symbol": "answer", "search": "references" }),
+    );
+    assert_eq!(found["matches"].as_array().unwrap().len(), 2);
+    assert_eq!(found["matches"][1]["definition"], false);
+    let text: Option<String> = h.ok(
+        "file_text",
+        json!({ "id": id, "source": worktree, "path": "main.rs" }),
+    );
+    assert_eq!(text.as_deref(), Some("fn main() {\n    answer();\n}\n"));
+    let missing: Option<String> = h.ok(
+        "file_text",
+        json!({ "id": id, "source": { "kind": "index" }, "path": "main.rs" }),
+    );
+    assert_eq!(missing, None);
+}
+
+#[test]
+fn profile_and_sign_out_through_ipc() {
+    // The harness's git reads a global config in its temporary folder.
+    let h = harness();
+    let profile: Value = h.ok("profile", json!({}));
+    assert_eq!(profile["name"], "Test User");
+    let repo = h.dir.path().join("repo");
+    let info: Value = h.ok("init_repo", json!({ "path": repo, "branch": "main" }));
+    let id = info["id"].as_str().unwrap().to_owned();
+    h.git(
+        &repo,
+        &["remote", "add", "origin", "https://example.com/a.git"],
+    );
+    let hosts: Vec<String> = h.ok("remote_hosts", json!({}));
+    assert_eq!(hosts, ["https://example.com"]);
+    let _: () = h.ok("sign_out", json!({ "identity": true, "hosts": [] }));
+    let profile: Value = h.ok("profile", json!({}));
+    assert_eq!(profile, json!({ "name": null, "email": null }));
+    let who: Value = h.ok("identity", json!({ "id": id }));
+    assert_eq!(who["name"], Value::Null);
+    let profile: Value = h.ok(
+        "set_profile",
+        json!({ "name": "Ada", "email": "ada@example.com" }),
+    );
+    assert_eq!(profile["email"], "ada@example.com");
+}
+
+#[test]
 fn image_diffs_through_ipc() {
     let h = harness();
     let repo = h.dir.path().join("repo");

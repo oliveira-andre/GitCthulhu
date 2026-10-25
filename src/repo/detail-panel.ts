@@ -51,6 +51,10 @@ export class DetailPanel {
   private picked = new Set<string>();
   private pickedSection: string | null = null;
   private pickAnchor: string | null = null;
+  /** The row (`data-key`) last opened from the lists, for ↑/↓ when its diff isn't the one showing. */
+  private cursor: string | null = null;
+  /** What each file row shows, for ↑/↓. */
+  private rowFiles = new WeakMap<HTMLElement, { target: DiffTarget; file: FileChange }>();
   private treeView = loadTreeView();
   private collapsedFolders = new Set<string>();
   /** The commit template was offered once; after that the box stays as the user leaves it. */
@@ -109,6 +113,13 @@ export class DetailPanel {
       this.commitButton,
     );
     this.content = el("div", "detail-content");
+    // Focused after a file is opened from it, so ↑/↓ walk the files.
+    this.content.tabIndex = -1;
+    this.content.addEventListener("keydown", (event) => {
+      if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      this.step(event.key === "ArrowDown" ? 1 : -1);
+    });
     this.root = el("aside", "detail-panel", this.content, this.composer);
     this.composer.hidden = true;
   }
@@ -461,6 +472,7 @@ export class DetailPanel {
       el("span", "file-actions", ...buttons),
     );
     row.dataset.key = keyOf(target, file.path);
+    this.rowFiles.set(row, { target, file });
     row.classList.toggle("picked", this.pickedSection === target.kind && this.picked.has(file.path));
     row.title = `${CHANGE_LABELS[file.kind]}: ${file.oldPath ? `${file.oldPath} → ` : ""}${file.path}`;
     row.addEventListener("click", (event) => {
@@ -471,7 +483,10 @@ export class DetailPanel {
         return;
       }
       this.pick(target.kind, file.path, [], "single");
-      this.view.openDiff({ target, file });
+      this.cursor = row.dataset.key!;
+      this.view.openDiff({ target, file }, undefined, false);
+      // Conflicts open the merge tool, which takes the keyboard itself.
+      if (file.kind !== "conflicted") this.content.focus({ preventScroll: true });
     });
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -531,6 +546,28 @@ export class DetailPanel {
       for (const p of order.slice(Math.max(from, 0), to + 1)) this.picked.add(p);
     }
     void this.refresh();
+  }
+
+  /**
+   * ↑/↓: opens the next or previous file, top to bottom through the
+   * unstaged files and then the staged ones (or a commit's files), and round
+   * again from either end. Conflicted files belong to the merge tool and are
+   * skipped; files in collapsed folders aren't on screen and are skipped too.
+   */
+  private step(direction: 1 | -1): void {
+    const rows = [...this.content.querySelectorAll<HTMLElement>(".file-row[data-key]:not(.kind-conflicted)")];
+    if (!rows.length) return;
+    let at = rows.findIndex((row) => row.classList.contains("open"));
+    if (at < 0) at = rows.findIndex((row) => row.dataset.key === this.cursor);
+    const next = rows[at < 0 ? (direction > 0 ? 0 : rows.length - 1) : (at + direction + rows.length) % rows.length];
+    const shown = this.rowFiles.get(next);
+    if (!shown) return;
+    const key = next.dataset.key!;
+    this.cursor = key;
+    this.pick(shown.target.kind, shown.file.path, [], "single");
+    this.view.openDiff(shown, undefined, false);
+    // Picking re-rendered the list: find the row again to keep it in view.
+    this.content.querySelector<HTMLElement>(`.file-row[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" });
   }
 
   private clearPicked(): void {
@@ -645,6 +682,11 @@ export class DetailPanel {
     }
   }
 
+  /** The global name and email changed, from the title bar or another repository. */
+  identityChanged(): void {
+    if (this.shown === WORK_IN_PROGRESS) void this.loadComposerContext();
+  }
+
   /** Shows who commits are made as; fills the message from `commit.template` once. */
   private async loadComposerContext(): Promise<void> {
     try {
@@ -689,6 +731,7 @@ export class DetailPanel {
       return false;
     }
     await this.loadComposerContext();
+    if (result.global) this.view.shell.identityChanged();
     return true;
   }
 

@@ -141,8 +141,13 @@ Docker check. See [Next session: deploy](#next-session-deploy-like-hostly).
   tree.
   - ⌘-click and ⇧-click select several files to stage, unstage, discard or
     stash together; `s` and `u` stage and unstage the selection.
+  - After opening a file from the lists, ↑ and ↓ step through the files,
+    showing each diff: down the unstaged files, on into the staged ones, and
+    round again from either end.
   - Stage, unstage or discard whole files, hunks or single lines, including
-    lines picked from several hunks at once.
+    lines picked from several hunks at once. Hovering a changed line shows a
+    button left of its number that stages just that line (+ for an added
+    line, − for a removed one).
 - **Commit composer** with a summary counter, description, amend, ⌘↩ to commit
   and ⇧⌘↩ to stage everything and commit.
   - Sign-off and skip-hooks (`--no-verify`) options, and the message starts
@@ -153,10 +158,18 @@ Docker check. See [Next session: deploy](#next-session-deploy-like-hostly).
   parent):
   - syntax highlighting for about 40 languages, with the changed words marked
     inside changed lines;
-  - unified or split (side by side), the full file, or ignoring whitespace;
+  - compact (the default: each line once, numbered once, with a changed
+    line's removed words struck through inline), detailed (removed and added
+    lines apart, with old and new numbers) or split (side by side), the full
+    file, or ignoring whitespace;
   - images shown before and after.
 
-  Hunk and line staging work in both layouts and with the full file.
+  Hunk and line staging work in every layout and with the full file.
+  Right-click offers Go to Definition and Go to References (F12, ⇧F12), Peek
+  (the results inline, under the line), Stage or Discard Selection (the picked
+  lines, or the lines a text selection spans), Copy and the command palette.
+  Lookups run `git grep` on the version of the code being shown; definitions
+  are the matches shaped like declarations.
 - **Branches and history**: create, rename, delete (with a force option when
   unmerged), check out (remote branches get a tracking branch; auto-stash when
   local changes are in the way), fast-forward, merge, rebase, cherry-pick,
@@ -227,8 +240,12 @@ Docker check. See [Next session: deploy](#next-session-deploy-like-hostly).
   submodules), and pick the destination folder inside the dialog. Start a new
   repository, or scan a folder for repositories (four levels deep, skipping
   `node_modules` and the like) to add them to the recent list.
-- **View**: zoom (⌘= / ⌘− / ⌘0), a Dracula (the default), dark, light or system theme (Preferences),
-  and a keyboard shortcut cheat sheet (⌘/).
+- **View**: zoom (⌘= / ⌘− / ⌘0), a Dracula (the default), dark, light or system theme (the
+  title bar, the palette or Preferences), and a keyboard shortcut cheat sheet (⌘/).
+- **You**: the right end of the title bar shows git's global name and email.
+  Its menu edits them, switches the theme and signs out, which forgets the
+  name and email and, if you choose, the passwords saved for the open
+  repositories' HTTPS hosts.
 - **A File menu** on macOS: New Tab (⌘T), Open Repository… (⌘O), Clone
   Repository…, New Repository…, Reopen Closed Tab (⇧⌘T), Close Tab (⌘W).
   Opening from any tab puts the repository in a tab of its own.

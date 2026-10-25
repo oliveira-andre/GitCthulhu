@@ -196,6 +196,18 @@ impl Git {
         args: &[S],
         record: &mut dyn FnMut(&[u8]) -> bool,
     ) -> Result<()> {
+        self.stream_split(dir, args, 0, record)
+    }
+
+    /// Like [`Git::stream`], for records that end with `separator` (for
+    /// example `\n` for `git grep -z`, whose fields are NUL-separated).
+    pub fn stream_split<S: AsRef<OsStr>>(
+        &self,
+        dir: &Path,
+        args: &[S],
+        separator: u8,
+        record: &mut dyn FnMut(&[u8]) -> bool,
+    ) -> Result<()> {
         let mut cmd = self.command(dir);
         cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| match e.kind() {
@@ -213,12 +225,12 @@ impl Git {
         let mut stopped = false;
         let read = loop {
             buf.clear();
-            match reader.read_until(0, &mut buf) {
+            match reader.read_until(separator, &mut buf) {
                 Ok(0) => break Ok(()),
                 Ok(_) => {}
                 Err(e) => break Err(e),
             }
-            if buf.last() == Some(&0) {
+            if buf.last() == Some(&separator) {
                 buf.pop();
             }
             if !buf.is_empty() && !record(&buf) {
