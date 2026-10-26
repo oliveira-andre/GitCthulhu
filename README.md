@@ -54,6 +54,13 @@ npx tauri build --debug --bundles app   # quick debug build: target/debug/bundle
 npm run tauri build                     # release installers
 ```
 
+If already installed and need to replace the current MacOS App
+```
+rm -rf /Applications/GitCthulhu.app
+cp -R target/release/bundle/macos/GitCthulhu.app /Applications/
+open /Applications/GitCthulhu.app
+```
+
 Release installers are written to `target/release/bundle/`:
 
 | OS | Output |
