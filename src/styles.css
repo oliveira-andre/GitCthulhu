@@ -1416,6 +1416,33 @@ body.mac .titlebar {
 .file-section {
   padding-bottom: 6px;
 }
+/* Uncommitted changes: every section stays on screen. Small lists take what
+   they need, the rest share what's left, and each list scrolls on its own. */
+.detail-content.staging {
+  display: grid;
+  grid-auto-rows: minmax(0, max-content);
+  align-content: start;
+  overflow: hidden;
+}
+.detail-content.staging:has(> .state-banner) {
+  grid-template-rows: max-content;
+}
+.staging > .file-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.staging > .file-section + .file-section {
+  border-top: 1px solid var(--line);
+}
+.staging .file-section-header {
+  flex: none;
+}
+.staging .file-list {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
 .file-section-header {
   position: sticky;
   top: 0;
@@ -1429,11 +1456,23 @@ body.mac .titlebar {
   background: var(--sunken);
 }
 .file-section-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+.file-section-header.collapsible {
+  cursor: pointer;
+}
+.file-section-header.collapsible:hover .file-section-title {
+  color: var(--fg);
+}
+.file-section.collapsed {
+  padding-bottom: 0;
 }
 .file-row {
   display: flex;

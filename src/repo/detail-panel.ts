@@ -57,6 +57,8 @@ export class DetailPanel {
   private rowFiles = new WeakMap<HTMLElement, { target: DiffTarget; file: FileChange }>();
   private treeView = loadTreeView();
   private collapsedFolders = new Set<string>();
+  /** Uncommitted-changes sections (by title) folded down to their header. */
+  private collapsedSections = new Set<string>();
   /** The commit template was offered once; after that the box stays as the user leaves it. */
   private templateOffered = false;
   private shown: string | null = null;
@@ -133,6 +135,7 @@ export class DetailPanel {
     this.shown = oid;
     const token = ++this.token;
     this.composer.hidden = oid !== WORK_IN_PROGRESS;
+    this.content.classList.toggle("staging", oid === WORK_IN_PROGRESS);
     if (!oid) {
       this.content.replaceChildren(el("div", "detail-empty", "Nothing selected"));
       return;
@@ -162,6 +165,7 @@ export class DetailPanel {
     this.shown = MANY;
     const token = ++this.token;
     this.composer.hidden = true;
+    this.content.classList.remove("staging");
     const commits = oids.map((oid) => this.view.graph?.commits.find((c) => c.oid === oid)).filter((c) => c !== undefined);
     const n = plural(oids.length, "commit");
 
@@ -275,7 +279,10 @@ export class DetailPanel {
         (file) => [iconButton("minus", "Unstage file", () => void this.view.attempt("Unstage", () => api.unstage(this.view.id, [file.path]), { graph: false }), "icon-button small")],
       ),
     );
+    // Each list scrolls on its own: keep it where it was across re-renders.
+    const scrolled = new Map([...this.content.querySelectorAll<HTMLElement>(".file-list[data-list]")].map((list) => [list.dataset.list, list.scrollTop]));
     this.content.replaceChildren(...nodes);
+    for (const list of this.content.querySelectorAll<HTMLElement>(".file-list[data-list]")) list.scrollTop = scrolled.get(list.dataset.list) ?? 0;
     this.markOpenFile(this.openFile);
 
     // Merges and conflicted picks come with a prepared message.
@@ -345,7 +352,14 @@ export class DetailPanel {
   ): HTMLElement {
     const section = target.kind;
     const picked = this.pickedSection === section ? files.filter((f) => this.picked.has(f.path)) : [];
-    const header = el("div", "file-section-header", el("span", "file-section-title", `${title} (${files.length})`));
+    const open = !this.collapsedSections.has(title);
+    const header = el("div", "file-section-header collapsible", el("span", "file-section-title", icon(open ? "chevronDown" : "chevronRight", 12), `${title} (${files.length})`));
+    header.addEventListener("click", (event) => {
+      if ((event.target as Element).closest("button")) return;
+      if (open) this.collapsedSections.add(title);
+      else this.collapsedSections.delete(title);
+      this.renderWip();
+    });
     const tools = el("span", "file-section-tools");
     if (picked.length > 1 && (section === "unstaged" || section === "staged")) {
       for (const [label, run] of this.pickedActions(section, picked.map((f) => f.path))) {
@@ -365,7 +379,9 @@ export class DetailPanel {
       tools.append(iconButton(this.treeView ? "file" : "tree", this.treeView ? "Show as a list of paths" : "Show as a folder tree", () => this.setTreeView(!this.treeView), "icon-button small"));
     }
     header.append(tools);
+    if (!open) return el("section", "file-section collapsed", header);
     const list = el("div", "file-list");
+    list.dataset.list = title;
     if (this.treeView) this.renderTree(list, files, target, buttons);
     else for (const file of files) list.append(this.fileRow(file, target, buttons(file), files));
     if (!files.length) list.append(el("div", "file-empty", "None"));
@@ -552,7 +568,8 @@ export class DetailPanel {
    * ↑/↓: opens the next or previous file, top to bottom through the
    * unstaged files and then the staged ones (or a commit's files), and round
    * again from either end. Conflicted files belong to the merge tool and are
-   * skipped; files in collapsed folders aren't on screen and are skipped too.
+   * skipped; files in collapsed sections or folders aren't on screen and are
+   * skipped too.
    */
   private step(direction: 1 | -1): void {
     const rows = [...this.content.querySelectorAll<HTMLElement>(".file-row[data-key]:not(.kind-conflicted)")];

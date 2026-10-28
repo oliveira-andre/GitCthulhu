@@ -286,8 +286,13 @@ export class GraphView {
     const step = keys[event.key];
     if (step === undefined || event.metaKey || event.ctrlKey || event.altKey) return;
     event.preventDefault();
+    this.moveSelection(step);
+  }
+
+  /** Selects the row above or below the selected one: a commit, a stash or the uncommitted changes. */
+  moveSelection(direction: number): void {
     const current = this.indexOf(this.view.selectedOid() ?? "");
-    const next = Math.min(Math.max(current + step, 0), this.graph.commits.length - 1);
+    const next = Math.min(Math.max(current + direction, 0), this.graph.commits.length - 1);
     const commit = this.graph.commits[next];
     if (commit) this.view.selectCommit(commit.oid, { scroll: "nearest" });
   }

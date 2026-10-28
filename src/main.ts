@@ -86,6 +86,23 @@ function handleShortcut(event: KeyboardEvent, workspace: Workspace): void {
   runCommand(id, workspace);
 }
 
+/**
+ * ↑/↓ walk the graph from wherever the keyboard is, as long as the graph is
+ * showing and nothing there used the key: after a click on a branch, a toolbar
+ * button or an empty spot as much as in the graph itself. Text fields, the
+ * terminal, menus and lists with their own ↑/↓ keep them.
+ */
+function walkGraph(event: KeyboardEvent, workspace: Workspace): void {
+  if (event.defaultPrevented || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+  if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || modalOpen() || document.querySelector(".menu")) return;
+  const repo = workspace.activeRepo();
+  if (!repo || repo.graphView.root.hidden) return;
+  if ((event.target as Element | null)?.closest?.("input, textarea, select, [contenteditable], .terminal-panel")) return;
+  event.preventDefault();
+  repo.graphView.focus();
+  repo.graphView.moveSelection(event.key === "ArrowDown" ? 1 : -1);
+}
+
 function runCommand(id: Command, workspace: Workspace): void {
   switch (id) {
     case "palette":
@@ -175,6 +192,8 @@ async function start(): Promise<void> {
   listenForPrompts();
   void onRepoChanged((change) => workspace.repoChanged(change));
   window.addEventListener("keydown", (event) => handleShortcut(event, workspace), true);
+  // Bubbling, so the focused element gets the arrows first.
+  window.addEventListener("keydown", (event) => walkGraph(event, workspace));
   // Menu items with shortcuts take the key before the page sees it, so both
   // paths end in runCommand.
   void listen<string>("menu", (event) => {
